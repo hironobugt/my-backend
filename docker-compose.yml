@@ -1,0 +1,73 @@
+# Docker Compose for Glacier Archive API with moto
+
+services:
+  # Moto Server - AWS Services Mock
+  moto:
+    image: motoserver/moto:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - MOTO_HOST=0.0.0.0
+      - MOTO_PORT=5000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Application Server
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - USE_MOTO=true
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://moto:5000
+      - AWS_ACCESS_KEY_ID=testing
+      - AWS_SECRET_ACCESS_KEY=testing
+      - METADATA_TABLE=glacier-archive-metadata-dev
+      - CUSTOMER_TABLE=glacier-customers-dev
+      - USAGE_TABLE=glacier-usage-dev
+      - USAGE_EVENTS_TABLE=glacier-usage-events-dev
+      - ARCHIVE_BUCKET=glacier-archive-dev-test
+      - USER_POOL_ID=us-east-1_test
+      - USER_POOL_CLIENT_ID=test-client-id
+      - STRIPE_SECRET_KEY=sk_test_placeholder
+      - STRIPE_WEBHOOK_SECRET=whsec_placeholder
+      - PORT=3000
+    depends_on:
+      moto:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    working_dir: /app
+    command: npm run dev:docker
+
+  # Setup Service - AWS Resources Creation
+  setup:
+    build: .
+    environment:
+      - NODE_ENV=development
+      - USE_MOTO=true
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://moto:5000
+      - AWS_ACCESS_KEY_ID=testing
+      - AWS_SECRET_ACCESS_KEY=testing
+      - METADATA_TABLE=glacier-archive-metadata-dev
+      - CUSTOMER_TABLE=glacier-customers-dev
+      - USAGE_TABLE=glacier-usage-dev
+      - USAGE_EVENTS_TABLE=glacier-usage-events-dev
+      - ARCHIVE_BUCKET=glacier-archive-dev-test
+    depends_on:
+      moto:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    working_dir: /app
+    command: node scripts/setup-moto.js
+    restart: "no"

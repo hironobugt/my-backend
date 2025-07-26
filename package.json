@@ -1,0 +1,62 @@
+{
+    "name": "glacier-archive-api",
+    "version": "1.0.0",
+    "description": "S3 Glacier Deep Archive API for mobile applications",
+    "main": "src/handler.js",
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc -w",
+        "test": "jest",
+        "cdk": "cdk",
+        "deploy": "cdk deploy",
+        "destroy": "cdk destroy",
+        "diff": "cdk diff",
+        "synth": "cdk synth",
+        "dev": "node server.js",
+        "dev:moto": "USE_MOTO=true npm run dev",
+        "dev:docker": "node server.js",
+        "docker:up": "docker-compose up --build",
+        "docker:down": "docker-compose down",
+        "docker:setup": "docker-compose run --rm setup",
+        "docker:dev": "docker-compose up --build app",
+        "start": "npm run dev"
+    },
+    "dependencies": {
+        "@aws-sdk/client-cognito-identity-provider": "^3.450.0",
+        "@aws-sdk/client-dynamodb": "^3.450.0",
+        "@aws-sdk/client-glacier": "^3.450.0",
+        "@aws-sdk/client-s3": "^3.450.0",
+        "@aws-sdk/lib-dynamodb": "^3.450.0",
+        "cors": "^2.8.5",
+        "dotenv": "^16.0.0",
+        "express": "^4.18.0",
+        "jsonwebtoken": "^9.0.0",
+        "jwks-client": "^2.0.5",
+        "sharp": "^0.34.3",
+        "stripe": "^14.0.0",
+        "uuid": "^9.0.0"
+    },
+    "devDependencies": {
+        "@types/aws-lambda": "^8.10.0",
+        "@types/jsonwebtoken": "^9.0.0",
+        "@types/node": "^20.0.0",
+        "@types/uuid": "^9.0.0",
+        "aws-cdk": "^2.100.0",
+        "aws-cdk-lib": "^2.100.0",
+        "constructs": "^10.3.0",
+        "esbuild": "^0.19.0",
+        "jest": "^29.0.0",
+        "nodemon": "^3.0.0",
+        "typescript": "^5.0.0"
+    },
+    "keywords": [
+        "aws",
+        "glacier",
+        "archive",
+        "api",
+        "mobile",
+        "cdk"
+    ],
+    "author": "",
+    "license": "MIT"
+}
