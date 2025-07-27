@@ -15,7 +15,7 @@ exports.handler = async (event) => {
         }
 
         const { limit = 50, lastEvaluatedKey, sortBy = 'uploadTimestamp', sortOrder = 'desc' } = event.queryStringParameters || {};
-        
+
         // ユーザーのアーカイブ一覧を取得
         const queryParams = {
             TableName: process.env.METADATA_TABLE,
@@ -37,7 +37,7 @@ exports.handler = async (event) => {
         }
 
         const response = await dynamoClient.send(new QueryCommand(queryParams));
-        
+
         const archives = response.Items?.map(item => ({
             archiveId: item.archiveId,
             fileName: item.fileName,
@@ -57,7 +57,7 @@ exports.handler = async (event) => {
             archives.sort((a, b) => {
                 const aVal = a[sortBy];
                 const bVal = b[sortBy];
-                
+
                 if (sortOrder === 'desc') {
                     return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
                 } else {
@@ -80,7 +80,7 @@ exports.handler = async (event) => {
             statusCounts,
             pagination: {
                 hasMore: !!response.LastEvaluatedKey,
-                lastEvaluatedKey: response.LastEvaluatedKey ? 
+                lastEvaluatedKey: response.LastEvaluatedKey ?
                     encodeURIComponent(JSON.stringify(response.LastEvaluatedKey)) : null
             },
             user: {
