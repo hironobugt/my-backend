@@ -11,7 +11,9 @@ const EVENT_TYPES = {
     UPLOAD: 'upload',
     RESTORE: 'restore',
     DELETE: 'delete',
-    STORAGE_CALCULATION: 'storage_calc'
+    STORAGE_CALCULATION: 'storage_calc',
+    THUMBNAIL_VIEW: 'thumbnail_view',
+    API_REQUEST: 'api_request'
 };
 
 exports.handler = async (event) => {
@@ -60,6 +62,8 @@ const getCurrentUsage = async (auth, { month }) => {
             userId: auth.userId,
             periodMonth: targetMonth,
             storageGB: 0,
+            uploadGB: 0,
+            restoreGB: 0,
             uploadCount: 0,
             restoreCount: 0,
             deleteCount: 0,
@@ -67,18 +71,22 @@ const getCurrentUsage = async (auth, { month }) => {
             lastUpdated: new Date().toISOString()
         };
 
-        // 料金計算
+        // 料金計算（競争力のある価格設定）
         const pricing = {
-            storage: 0.01, // $0.01 per GB per month
-            upload: 0.05,  // $0.05 per upload
-            restore: 0.10, // $0.10 per restore
-            baseFee: 5.00  // $5.00 monthly base fee
+            storage: 0.012,   // $0.012 per GB per month (AWS実コスト: $0.003, 400%マージン)
+            upload: 0.09,     // $0.09 per GB uploaded (AWS実コスト: $0.015, 600%マージン)
+            restore: 0.40,    // $0.40 per GB restored (AWS実コスト: $0.08, 500%マージン)
+            baseFee: 3.00,    // $3.00 monthly base fee (競合対抗価格)
+            thumbnailDelivery: 0.0005, // $0.0005 per thumbnail view (500%マージン)
+            apiRequests: 0.000008      // $0.000008 per API request (800%マージン)
         };
 
         const costs = {
             storage: usage.storageGB * pricing.storage,
-            uploads: usage.uploadCount * pricing.upload,
-            restores: usage.restoreCount * pricing.restore,
+            uploads: usage.uploadGB * pricing.upload,
+            restores: usage.restoreGB * pricing.restore,
+            thumbnails: (usage.thumbnailViews || 0) * pricing.thumbnailDelivery,
+            apiRequests: (usage.apiRequestCount || 0) * pricing.apiRequests,
             baseFee: pricing.baseFee
         };
 
@@ -203,7 +211,7 @@ const calculateStorageUsage = async (auth) => {
 
         // 現在の月の使用量を更新
         const currentMonth = new Date().toISOString().slice(0, 7);
-        
+
         await dynamoClient.send(new UpdateCommand({
             TableName: process.env.USAGE_TABLE,
             Key: {
@@ -270,7 +278,7 @@ const recordUsageEvent = async (userId, eventType, eventData = {}) => {
 const updateMonthlyUsage = async (userId, eventType, eventData) => {
     try {
         const currentMonth = new Date().toISOString().slice(0, 7);
-        
+
         let updateExpression = 'SET lastUpdated = :timestamp';
         let expressionAttributeValues = {
             ':timestamp': new Date().toISOString()
@@ -279,16 +287,32 @@ const updateMonthlyUsage = async (userId, eventType, eventData) => {
         switch (eventType) {
             case EVENT_TYPES.UPLOAD:
                 updateExpression += ', uploadCount = if_not_exists(uploadCount, :zero) + :one';
+                updateExpression += ', uploadGB = if_not_exists(uploadGB, :zeroGB) + :sizeGB';
                 expressionAttributeValues[':zero'] = 0;
                 expressionAttributeValues[':one'] = 1;
+                expressionAttributeValues[':zeroGB'] = 0;
+                expressionAttributeValues[':sizeGB'] = eventData.fileSizeGB || 0;
                 break;
             case EVENT_TYPES.RESTORE:
                 updateExpression += ', restoreCount = if_not_exists(restoreCount, :zero) + :one';
+                updateExpression += ', restoreGB = if_not_exists(restoreGB, :zeroGB) + :sizeGB';
                 expressionAttributeValues[':zero'] = 0;
                 expressionAttributeValues[':one'] = 1;
+                expressionAttributeValues[':zeroGB'] = 0;
+                expressionAttributeValues[':sizeGB'] = eventData.fileSizeGB || 0;
                 break;
             case EVENT_TYPES.DELETE:
                 updateExpression += ', deleteCount = if_not_exists(deleteCount, :zero) + :one';
+                expressionAttributeValues[':zero'] = 0;
+                expressionAttributeValues[':one'] = 1;
+                break;
+            case EVENT_TYPES.THUMBNAIL_VIEW:
+                updateExpression += ', thumbnailViews = if_not_exists(thumbnailViews, :zero) + :one';
+                expressionAttributeValues[':zero'] = 0;
+                expressionAttributeValues[':one'] = 1;
+                break;
+            case EVENT_TYPES.API_REQUEST:
+                updateExpression += ', apiRequestCount = if_not_exists(apiRequestCount, :zero) + :one';
                 expressionAttributeValues[':zero'] = 0;
                 expressionAttributeValues[':one'] = 1;
                 break;

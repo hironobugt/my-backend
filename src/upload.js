@@ -30,6 +30,13 @@ exports.handler = async (event) => {
             return createErrorResponse(401, auth.error || 'Unauthorized');
         }
 
+        // APIリクエストの使用量を記録
+        const { recordUsageEvent } = require('./usage');
+        await recordUsageEvent(auth.userId, 'api_request', {
+            endpoint: 'upload',
+            method: event.httpMethod
+        });
+
         const { fileName, fileContent, metadata = {} } = JSON.parse(event.body);
         
         if (!fileName || !fileContent) {

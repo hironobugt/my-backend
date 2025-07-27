@@ -8,13 +8,26 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const awsConfig = getAWSConfig();
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
 
-// 料金プラン設定
+// 料金プラン設定（競争力のある価格設定）
 const PRICING = {
-    storage: 0.01, // $0.01 per GB per month
-    upload: 0.05,  // $0.05 per upload
-    restore: 0.10, // $0.10 per restore request
-    baseFee: 5.00  // $5.00 monthly base fee
-};
+    // Glacier Deep Archive ストレージ（400%マージン - 競合対抗価格）
+    storage: 0.012,   // $0.012 per GB per month (AWS実コスト: $0.003, 競合対抗で適正マージン)
+
+    // アップロード処理（600%マージン）
+    upload: 0.09,     // $0.09 per GB uploaded (AWS実コスト: $0.015, サムネイル生成・処理費・利益込み)
+
+    // 復元処理（500%マージン）
+    restore: 0.40,    // $0.40 per GB restored (AWS実コスト: $0.08, 高速配信・サポート・利益込み)
+
+    // 基本料金（競合対抗価格）
+    baseFee: 3.00,    // $3.00 monthly base fee (競合対抗、従量課金で収益補完)
+
+    // サムネイル配信料金（500%マージン）
+    thumbnailDelivery: 0.0005, // $0.0005 per thumbnail view (AWS実コスト: $0.0001 + 処理費)
+
+    // API リクエスト料金（800%マージン）
+    apiRequests: 0.000008 // $0.000008 per API request (AWS実コスト: $0.000001 + 処理費)
+}
 
 exports.handler = async (event) => {
     try {
@@ -218,7 +231,7 @@ const getBillingInfo = async (auth) => {
         if (customer.stripeCustomerId) {
             // Stripe顧客情報を取得
             stripeCustomer = await stripe.customers.retrieve(customer.stripeCustomerId);
-            
+
             // 支払い方法を取得
             const paymentMethodsResponse = await stripe.paymentMethods.list({
                 customer: customer.stripeCustomerId,

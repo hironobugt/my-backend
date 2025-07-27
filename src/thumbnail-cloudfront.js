@@ -262,6 +262,14 @@ exports.handler = async (event) => {
             return createErrorResponse(500, 'CloudFront not configured');
         }
 
+        // サムネイル配信の使用量を記録
+        const { recordUsageEvent } = require('./usage');
+        await recordUsageEvent(auth.userId, 'thumbnail_view', {
+            archiveId: archiveId,
+            thumbnailKey: thumbnailKey,
+            fileType: fileType
+        });
+
         return createSuccessResponse({
             thumbnailUrl: cloudFrontUrl,
             fileType: fileType,
