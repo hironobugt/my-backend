@@ -1,12 +1,16 @@
 const Stripe = require('stripe');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand, DeleteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { CognitoIdentityProviderClient, AdminDeleteUserCommand } = require('@aws-sdk/client-cognito-identity-provider');
 const { requireAuth, createErrorResponse, createSuccessResponse } = require('./auth');
 const { getAWSConfig } = require('./aws-config');
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const awsConfig = getAWSConfig();
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
+const s3Client = new S3Client(awsConfig);
+const cognitoClient = new CognitoIdentityProviderClient(awsConfig);
 
 // 料金プラン設定（競争力のある価格設定）
 const PRICING = {
@@ -54,6 +58,8 @@ exports.handler = async (event) => {
                 return await getInvoices(auth, params);
             case 'cancel-subscription':
                 return await cancelSubscription(auth);
+            case 'delete-account':
+                return await deleteAccount(auth, params);
             default:
                 return createErrorResponse(400, 'Invalid action');
         }
@@ -404,5 +410,318 @@ const getCustomerFromDB = async (userId) => {
     } catch (error) {
         console.error('Get customer from DB error:', error);
         return null;
+    }
+};// 完
+全なアカウント削除機能
+const deleteAccount = async (auth, { confirmPassword, reason }) => {
+    try {
+        console.log(`Account deletion requested for user: ${auth.userId}`);
+
+        // 削除理由の記録（オプション）
+        if (reason) {
+            console.log(`Deletion reason: ${reason}`);
+        }
+
+        // Step 1: Stripeサブスクリプションとカスタマーの削除
+        await deleteStripeData(auth.userId);
+
+        // Step 2: S3からユーザーデータを削除
+        await deleteS3UserData(auth.userId);
+
+        // Step 3: DynamoDBからユーザーデータを削除
+        await deleteDynamoDBUserData(auth.userId);
+
+        // Step 4: Cognitoユーザーを削除
+        await deleteCognitoUser(auth.userId);
+
+        console.log(`Account deletion completed for user: ${auth.userId}`);
+
+        return createSuccessResponse({
+            message: 'Account has been permanently deleted',
+            deletedAt: new Date().toISOString(),
+            userId: auth.userId
+        });
+
+    } catch (error) {
+        console.error('Delete account error:', error);
+        return createErrorResponse(500, `Account deletion failed: ${error.message}`);
+    }
+};
+
+// Stripeデータの削除
+const deleteStripeData = async (userId) => {
+    try {
+        const customer = await getCustomerFromDB(userId);
+        if (!customer || !customer.stripeCustomerId) {
+            console.log(`No Stripe customer found for user: ${userId}`);
+            return;
+        }
+
+        // サブスクリプションがある場合は即座にキャンセル
+        if (customer.subscriptionId) {
+            try {
+                await stripe.subscriptions.cancel(customer.subscriptionId);
+                console.log(`Subscription canceled: ${customer.subscriptionId}`);
+            } catch (error) {
+                console.warn(`Failed to cancel subscription: ${error.message}`);
+            }
+        }
+
+        // Stripe顧客を削除
+        try {
+            await stripe.customers.del(customer.stripeCustomerId);
+            console.log(`Stripe customer deleted: ${customer.stripeCustomerId}`);
+        } catch (error) {
+            console.warn(`Failed to delete Stripe customer: ${error.message}`);
+        }
+
+    } catch (error) {
+        console.error('Delete Stripe data error:', error);
+        throw error;
+    }
+};
+
+// S3からユーザーデータを削除
+const deleteS3UserData = async (userId) => {
+    try {
+        const bucketName = process.env.ARCHIVE_BUCKET;
+
+        // アーカイブファイルを削除
+        await deleteS3Objects(bucketName, `archives/${userId}/`);
+
+        // サムネイルを削除
+        await deleteS3Objects(bucketName, `thumbnails/${userId}/`);
+
+        console.log(`S3 user data deleted for user: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete S3 user data error:', error);
+        throw error;
+    }
+};
+
+// S3オブジェクトの一括削除
+const deleteS3Objects = async (bucketName, prefix) => {
+    try {
+        let continuationToken = undefined;
+        let totalDeleted = 0;
+
+        do {
+            // オブジェクト一覧を取得
+            const listResponse = await s3Client.send(new ListObjectsV2Command({
+                Bucket: bucketName,
+                Prefix: prefix,
+                ContinuationToken: continuationToken,
+                MaxKeys: 1000
+            }));
+
+            if (!listResponse.Contents || listResponse.Contents.length === 0) {
+                break;
+            }
+
+            // 削除対象オブジェクトのリストを作成
+            const objectsToDelete = listResponse.Contents.map(obj => ({
+                Key: obj.Key
+            }));
+
+            // オブジェクトを一括削除
+            if (objectsToDelete.length > 0) {
+                await s3Client.send(new DeleteObjectsCommand({
+                    Bucket: bucketName,
+                    Delete: {
+                        Objects: objectsToDelete,
+                        Quiet: true
+                    }
+                }));
+
+                totalDeleted += objectsToDelete.length;
+                console.log(`Deleted ${objectsToDelete.length} objects from ${prefix}`);
+            }
+
+            continuationToken = listResponse.NextContinuationToken;
+
+        } while (continuationToken);
+
+        console.log(`Total deleted objects from ${prefix}: ${totalDeleted}`);
+
+    } catch (error) {
+        console.error(`Delete S3 objects error for prefix ${prefix}:`, error);
+        throw error;
+    }
+};
+
+// DynamoDBからユーザーデータを削除
+const deleteDynamoDBUserData = async (userId) => {
+    try {
+        // アーカイブメタデータを削除
+        await deleteArchiveMetadata(userId);
+
+        // 使用量データを削除
+        await deleteUsageData(userId);
+
+        // 顧客データを削除
+        await deleteCustomerData(userId);
+
+        console.log(`DynamoDB user data deleted for user: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete DynamoDB user data error:', error);
+        throw error;
+    }
+};
+
+// アーカイブメタデータの削除
+const deleteArchiveMetadata = async (userId) => {
+    try {
+        const tableName = process.env.ARCHIVE_TABLE;
+        let lastEvaluatedKey = undefined;
+        let totalDeleted = 0;
+
+        do {
+            // ユーザーのアーカイブを検索
+            const scanResponse = await dynamoClient.send(new ScanCommand({
+                TableName: tableName,
+                FilterExpression: 'userId = :userId',
+                ExpressionAttributeValues: {
+                    ':userId': userId
+                },
+                ExclusiveStartKey: lastEvaluatedKey,
+                Limit: 100
+            }));
+
+            if (scanResponse.Items && scanResponse.Items.length > 0) {
+                // 各アーカイブを削除
+                for (const item of scanResponse.Items) {
+                    await dynamoClient.send(new DeleteCommand({
+                        TableName: tableName,
+                        Key: {
+                            userId: item.userId,
+                            archiveId: item.archiveId
+                        }
+                    }));
+                    totalDeleted++;
+                }
+            }
+
+            lastEvaluatedKey = scanResponse.LastEvaluatedKey;
+
+        } while (lastEvaluatedKey);
+
+        console.log(`Deleted ${totalDeleted} archive metadata records for user: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete archive metadata error:', error);
+        throw error;
+    }
+};
+
+// 使用量データの削除
+const deleteUsageData = async (userId) => {
+    try {
+        const usageTable = process.env.USAGE_TABLE;
+        const usageEventsTable = process.env.USAGE_EVENTS_TABLE;
+
+        // 使用量データを削除
+        let lastEvaluatedKey = undefined;
+        let totalDeleted = 0;
+
+        do {
+            const queryResponse = await dynamoClient.send(new QueryCommand({
+                TableName: usageTable,
+                KeyConditionExpression: 'userId = :userId',
+                ExpressionAttributeValues: {
+                    ':userId': userId
+                },
+                ExclusiveStartKey: lastEvaluatedKey,
+                Limit: 100
+            }));
+
+            if (queryResponse.Items && queryResponse.Items.length > 0) {
+                for (const item of queryResponse.Items) {
+                    await dynamoClient.send(new DeleteCommand({
+                        TableName: usageTable,
+                        Key: {
+                            userId: item.userId,
+                            periodMonth: item.periodMonth
+                        }
+                    }));
+                    totalDeleted++;
+                }
+            }
+
+            lastEvaluatedKey = queryResponse.LastEvaluatedKey;
+
+        } while (lastEvaluatedKey);
+
+        // 使用量イベントデータを削除
+        lastEvaluatedKey = undefined;
+        let totalEventsDeleted = 0;
+
+        do {
+            const queryResponse = await dynamoClient.send(new QueryCommand({
+                TableName: usageEventsTable,
+                KeyConditionExpression: 'userId = :userId',
+                ExpressionAttributeValues: {
+                    ':userId': userId
+                },
+                ExclusiveStartKey: lastEvaluatedKey,
+                Limit: 100
+            }));
+
+            if (queryResponse.Items && queryResponse.Items.length > 0) {
+                for (const item of queryResponse.Items) {
+                    await dynamoClient.send(new DeleteCommand({
+                        TableName: usageEventsTable,
+                        Key: {
+                            userId: item.userId,
+                            timestamp: item.timestamp
+                        }
+                    }));
+                    totalEventsDeleted++;
+                }
+            }
+
+            lastEvaluatedKey = queryResponse.LastEvaluatedKey;
+
+        } while (lastEvaluatedKey);
+
+        console.log(`Deleted ${totalDeleted} usage records and ${totalEventsDeleted} usage events for user: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete usage data error:', error);
+        throw error;
+    }
+};
+
+// 顧客データの削除
+const deleteCustomerData = async (userId) => {
+    try {
+        await dynamoClient.send(new DeleteCommand({
+            TableName: process.env.CUSTOMER_TABLE,
+            Key: { userId }
+        }));
+
+        console.log(`Customer data deleted for user: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete customer data error:', error);
+        throw error;
+    }
+};
+
+// Cognitoユーザーの削除
+const deleteCognitoUser = async (userId) => {
+    try {
+        await cognitoClient.send(new AdminDeleteUserCommand({
+            UserPoolId: process.env.USER_POOL_ID,
+            Username: userId
+        }));
+
+        console.log(`Cognito user deleted: ${userId}`);
+
+    } catch (error) {
+        console.error('Delete Cognito user error:', error);
+        // Cognitoユーザーの削除に失敗してもアカウント削除は続行
+        console.warn(`Failed to delete Cognito user, but continuing with account deletion: ${error.message}`);
     }
 };
