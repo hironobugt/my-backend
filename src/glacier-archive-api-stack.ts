@@ -71,13 +71,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         custom: true,
         adminUserPassword: true
       },
-      oAuth: {
-        flows: {
-          authorizationCodeGrant: false,
-          implicitCodeGrant: false,
-          clientCredentials: false
-        }
-      },
+      // OAuth設定を削除（モバイルアプリでは不要）
+      // oAuth設定なし
       refreshTokenValidity: cdk.Duration.days(30),
       accessTokenValidity: cdk.Duration.hours(1),
       idTokenValidity: cdk.Duration.hours(1)
