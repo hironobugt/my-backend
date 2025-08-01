@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { GlacierArchiveApiStack } from '../lib/glacier-archive-api-stack';
+import { GlacierArchiveApiStack } from '../src/glacier-archive-api-stack';
 
 const app = new cdk.App();
 
