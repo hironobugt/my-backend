@@ -128,12 +128,12 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
     npm run build
 fi
 
-# Bootstrap CDK (if needed)
+# Bootstrap CDK (force)
 echo -e "${BLUE}🏗️  Bootstrapping CDK...${NC}"
 if [ "$CI_MODE" = "true" ]; then
-    cdk bootstrap aws://$ACCOUNT_ID/$REGION
+    cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
 else
-    cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE
+    cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
 fi
 
 # Prepare CDK deploy command
