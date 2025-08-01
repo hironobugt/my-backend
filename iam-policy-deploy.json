@@ -203,6 +203,16 @@
                 "ssm:DeleteParameter"
             ],
             "Resource": "arn:aws:ssm:ap-northeast-1:*:parameter/cdk-bootstrap/*"
+        },
+        {
+            "Sid": "LambdaLayers",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:GetLayerVersion",
+                "lambda:ListLayerVersions",
+                "lambda:ListLayers"
+            ],
+            "Resource": "*"
         }
     ]
 }

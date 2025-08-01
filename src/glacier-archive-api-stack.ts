@@ -309,15 +309,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       functionName: `glacier-thumbnail-${environment}`,
       code: lambda.Code.fromAsset('src'),
       handler: 'thumbnail-cloudfront.handler',
-      description: 'Get thumbnail URLs (CloudFront)',
-      layers: [
-        // Sharp layer for image processing (if needed)
-        lambda.LayerVersion.fromLayerVersionArn(
-          this,
-          'SharpLayer',
-          `arn:aws:lambda:${this.region}:634166935893:layer:sharp:1`
-        )
-      ]
+      description: 'Get thumbnail URLs (CloudFront)'
+      // Sharp layerを削除 - npm packageのsharpを使用
     });
 
     // サムネイル一括取得関数
