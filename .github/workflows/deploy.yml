@@ -42,14 +42,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Build TypeScript
+        run: npm run build
+      
       - name: Lint code
         run: npm run lint || echo "Linting skipped - no lint script"
       
       - name: Run tests
         run: npm test || echo "Tests skipped - no test script"
-      
-      - name: Build TypeScript
-        run: npm run build
       
       - name: Cache build artifacts
         uses: actions/cache@v3
@@ -88,7 +88,16 @@ jobs:
           key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       
       - name: Install dependencies (if cache miss)
-        run: npm ci
+        run: |
+          if [ ! -d "node_modules" ]; then
+            npm ci
+          fi
+      
+      - name: Build TypeScript (if cache miss)
+        run: |
+          if [ ! -d "lib" ]; then
+            npm run build
+          fi
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -111,7 +120,7 @@ jobs:
       - name: Deploy to development
         id: deploy
         run: |
-          ./deploy.sh --environment dev
+          ./deploy.sh --environment dev --ci
           
           # Extract API URL from CDK outputs
           if [ -f "cdk-outputs.json" ]; then
@@ -164,7 +173,16 @@ jobs:
           key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       
       - name: Install dependencies (if cache miss)
-        run: npm ci
+        run: |
+          if [ ! -d "node_modules" ]; then
+            npm ci
+          fi
+      
+      - name: Build TypeScript (if cache miss)
+        run: |
+          if [ ! -d "lib" ]; then
+            npm run build
+          fi
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -187,7 +205,7 @@ jobs:
       - name: Deploy to production
         id: deploy
         run: |
-          ./deploy.sh --environment prod
+          ./deploy.sh --environment prod --ci
           
           # Extract API URL from CDK outputs
           if [ -f "cdk-outputs.json" ]; then
