@@ -133,10 +133,14 @@ echo -e "${BLUE}🏗️  Bootstrapping CDK...${NC}"
 if [ "$CI_MODE" = "true" ]; then
     # Delete existing CDKToolkit if it exists but is incomplete
     aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION || true
+    # Delete CDK S3 buckets if they exist
+    aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --force || true
     sleep 30
     cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
 else
     aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE || true
+    # Delete CDK S3 buckets if they exist
+    aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --force --profile $PROFILE || true
     sleep 30
     cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
 fi
