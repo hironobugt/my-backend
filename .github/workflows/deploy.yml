@@ -5,13 +5,9 @@ on:
     branches:
       - main
       - develop
-    paths:
-      - 'glaceon/**'
   pull_request:
     branches:
       - main
-    paths:
-      - 'glaceon/**'
   workflow_dispatch:
     inputs:
       environment:
@@ -31,9 +27,6 @@ jobs:
   test:
     name: Test & Build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: glaceon
     
     steps:
       - name: Checkout code
@@ -44,7 +37,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
+          cache-dependency-path: package-lock.json
       
       - name: Install dependencies
         run: npm ci
@@ -62,9 +55,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
+            lib
+            node_modules
+          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
 
   deploy-dev:
     name: Deploy to Development
@@ -74,9 +67,6 @@ jobs:
     environment: 
       name: development
       url: ${{ steps.deploy.outputs.api-url }}
-    defaults:
-      run:
-        working-directory: glaceon
     
     steps:
       - name: Checkout code
@@ -87,15 +77,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
+          cache-dependency-path: package-lock.json
       
       - name: Restore build cache
         uses: actions/cache@v3
         with:
           path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
+            lib
+            node_modules
+          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       
       - name: Install dependencies (if cache miss)
         run: npm ci
@@ -153,9 +143,6 @@ jobs:
     environment: 
       name: production
       url: ${{ steps.deploy.outputs.api-url }}
-    defaults:
-      run:
-        working-directory: glaceon
     
     steps:
       - name: Checkout code
@@ -166,15 +153,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
+          cache-dependency-path: package-lock.json
       
       - name: Restore build cache
         uses: actions/cache@v3
         with:
           path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
+            lib
+            node_modules
+          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       
       - name: Install dependencies (if cache miss)
         run: npm ci
@@ -234,9 +221,6 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs: [deploy-dev, deploy-prod]
-    defaults:
-      run:
-        working-directory: glaceon
     
     steps:
       - name: Cleanup temporary files
