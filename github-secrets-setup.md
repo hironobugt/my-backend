@@ -1,68 +1,48 @@
 # GitHub Secrets Setup Guide
 
-## 🔐 Required Secrets
+## 🔐 必須Secrets一覧
 
-### AWS Development Environment
+### AWS関連
 ```
-Name: AWS_ACCESS_KEY_ID
-Value: AKIA... (your dev AWS access key)
-
-Name: AWS_SECRET_ACCESS_KEY  
-Value: your-dev-secret-access-key
-```
-
-### AWS Production Environment
-```
-Name: AWS_ACCESS_KEY_ID_PROD
-Value: AKIA... (your prod AWS access key)
-
-Name: AWS_SECRET_ACCESS_KEY_PROD
-Value: your-prod-secret-access-key
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_ACCESS_KEY_ID_PROD=AKIA...
+AWS_SECRET_ACCESS_KEY_PROD=your-prod-secret-key
 ```
 
-### Stripe Development
+### Stripe関連
 ```
-Name: STRIPE_SECRET_KEY_DEV
-Value: sk_test_... (your Stripe test secret key)
-
-Name: STRIPE_WEBHOOK_SECRET_DEV
-Value: whsec_... (your Stripe test webhook secret)
-```
-
-### Stripe Production
-```
-Name: STRIPE_SECRET_KEY_PROD
-Value: sk_live_... (your Stripe live secret key)
-
-Name: STRIPE_WEBHOOK_SECRET_PROD
-Value: whsec_... (your Stripe live webhook secret)
+STRIPE_SECRET_KEY_DEV=sk_test_51...
+STRIPE_WEBHOOK_SECRET_DEV=whsec_1...
+STRIPE_SECRET_KEY_PROD=sk_live_51...
+STRIPE_WEBHOOK_SECRET_PROD=whsec_1...
 ```
 
-## 🛠️ Setup Steps
+## 📋 設定手順
 
-1. Go to your GitHub repository
-2. Click **Settings** tab
-3. Click **Secrets and variables** → **Actions**
-4. Click **New repository secret**
-5. Add each secret above
+### 1. GitHubリポジトリでSecrets設定
+1. リポジトリページ → **Settings**
+2. **Secrets and variables** → **Actions**
+3. **New repository secret** をクリック
+4. 上記のsecretを一つずつ追加
 
-## 🔒 Security Best Practices
+### 2. Stripe Webhook Secret の取得方法
+1. Stripe Dashboard → **Developers** → **Webhooks**
+2. **Add endpoint** をクリック
+3. Endpoint URL: `https://your-api-url.amazonaws.com/dev/webhook/stripe`
+4. **Select events** で以下を選択：
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `invoice.payment_succeeded`
+   - `invoice.payment_failed`
+   - `customer.created`
+   - `customer.updated`
+5. **Add endpoint** をクリック
+6. 作成されたWebhookの **Signing secret** をコピー
 
-✅ **DO:**
-- Use separate AWS accounts for dev/prod
-- Use Stripe test keys for development
-- Rotate keys regularly
-- Use least privilege IAM policies
-
-❌ **DON'T:**
-- Commit secrets to code
-- Share secrets in chat/email
-- Use production keys in development
-- Give excessive permissions
-
-## 📋 IAM Policy for AWS User
-
-Minimum required permissions for deployment:
+### 3. AWS IAM設定
+デプロイ用のIAMユーザーに以下の権限を付与：
 
 ```json
 {
@@ -88,10 +68,28 @@ Minimum required permissions for deployment:
 }
 ```
 
-## 🧪 Testing Secrets
+## ✅ 設定確認
 
-After setup, test with a manual workflow dispatch:
-1. Go to **Actions** tab
-2. Select **Deploy Glaceon API**
-3. Click **Run workflow**
-4. Choose environment and run
+### 1. Secrets確認
+```bash
+# GitHub Actions実行時にログで確認
+echo "Stripe key configured: ${STRIPE_SECRET_KEY_DEV:0:7}..."
+```
+
+### 2. Webhook動作確認
+```bash
+# Stripe Dashboard → Webhooks → Test webhook
+# または実際に決済テストを実行
+```
+
+## 🚨 セキュリティ注意事項
+
+### ❌ 絶対にやってはいけないこと
+- Stripe keyをコードにハードコード
+- 本番keyをテスト環境で使用
+- Webhook secretを公開リポジトリにコミット
+
+### ✅ 推奨事項
+- 定期的なkey rotation
+- 最小権限の原則
+- ログでの秘密情報マスキング
