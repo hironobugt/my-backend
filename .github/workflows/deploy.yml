@@ -120,6 +120,7 @@ jobs:
       - name: Deploy to development
         id: deploy
         run: |
+          chmod +x deploy.sh
           ./deploy.sh --environment dev --ci
           
           # Extract API URL from CDK outputs
