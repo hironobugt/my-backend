@@ -136,6 +136,15 @@ if [ "$CI_MODE" = "true" ]; then
     
     if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
         echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
+    elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
+        echo -e "${YELLOW}⚠️  CDK bootstrap in failed state, cleaning up and retrying...${NC}"
+        # Delete failed stack and retry
+        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION || true
+        # Delete CDK S3 buckets if they exist (empty first, then remove)
+        aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive || true
+        aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION || true
+        sleep 30
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
     else
         echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
         # Only bootstrap if needed
@@ -147,6 +156,15 @@ else
     
     if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
         echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
+    elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
+        echo -e "${YELLOW}⚠️  CDK bootstrap in failed state, cleaning up and retrying...${NC}"
+        # Delete failed stack and retry
+        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE || true
+        # Delete CDK S3 buckets if they exist (empty first, then remove)
+        aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive --profile $PROFILE || true
+        aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --profile $PROFILE || true
+        sleep 30
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
     else
         echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
         # Only bootstrap if needed
