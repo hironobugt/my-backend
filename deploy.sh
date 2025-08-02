@@ -131,24 +131,19 @@ fi
 # Check if CDK is already bootstrapped
 echo -e "${BLUE}🏗️  Checking CDK bootstrap status...${NC}"
 if [ "$CI_MODE" = "true" ]; then
-    # Check if CDKToolkit stack exists and is in good state
+    # Check if CDKToolkit stack exists
     STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
     
     if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
         echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
-    elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
-        echo -e "${YELLOW}⚠️  CDK bootstrap in failed state, cleaning up and retrying...${NC}"
-        # Delete failed stack and retry
-        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION || true
-        # Delete CDK S3 buckets if they exist (empty first, then remove)
-        aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive || true
-        aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION || true
-        sleep 30
+    elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
+        echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
         cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
     else
-        echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
-        # Only bootstrap if needed
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
+        echo -e "${YELLOW}⚠️  CDK bootstrap exists but in state: $STACK_STATUS${NC}"
+        echo -e "${BLUE}ℹ️  Attempting to proceed with existing bootstrap (safe for production)${NC}"
+        # Try to proceed with existing resources - safer for production
+        # If deployment fails, the issue will be caught at deploy stage
     fi
 else
     # Local development with profile
@@ -156,19 +151,13 @@ else
     
     if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
         echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
-    elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
-        echo -e "${YELLOW}⚠️  CDK bootstrap in failed state, cleaning up and retrying...${NC}"
-        # Delete failed stack and retry
-        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE || true
-        # Delete CDK S3 buckets if they exist (empty first, then remove)
-        aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive --profile $PROFILE || true
-        aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --profile $PROFILE || true
-        sleep 30
+    elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
+        echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
         cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
     else
-        echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
-        # Only bootstrap if needed
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
+        echo -e "${YELLOW}⚠️  CDK bootstrap exists but in state: $STACK_STATUS${NC}"
+        echo -e "${BLUE}ℹ️  Attempting to proceed with existing bootstrap (safe for production)${NC}"
+        # Try to proceed with existing resources - safer for production
     fi
 fi
 
