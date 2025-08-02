@@ -1,111 +1,229 @@
 #!/bin/bash
 
-# CDK Bootstrap Fix Script
+# Glaceon API Deployment Script
+
 set -e
 
-# Colors
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
-ACCOUNT_ID="471511831486"
+# Default values
+ENVIRONMENT="dev"
 REGION="ap-northeast-1"
-BUCKET_NAME="cdk-hnb659fds-assets-${ACCOUNT_ID}-${REGION}"
+PROFILE="default"
+CI_MODE=false
 
-echo -e "${BLUE}🔧 CDK Bootstrap Fix Script${NC}"
-echo -e "${BLUE}Account: ${YELLOW}$ACCOUNT_ID${NC}"
+# Detect CI environment
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+    CI_MODE=true
+    PROFILE=""
+fi
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -e|--environment)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        -r|--region)
+            REGION="$2"
+            shift 2
+            ;;
+        -p|--profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --ci)
+            CI_MODE=true
+            PROFILE=""
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Options:"
+            echo "  -e, --environment ENV    Environment (dev/staging/prod) [default: dev]"
+            echo "  -r, --region REGION      AWS Region [default: ap-northeast-1]"
+            echo "  -p, --profile PROFILE    AWS Profile [default: default]"
+            echo "  --ci                     CI mode (no profile needed)"
+            echo "  -h, --help              Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option $1"
+            exit 1
+            ;;
+    esac
+done
+
+echo -e "${BLUE}🚀 Glaceon API Deployment${NC}"
+echo -e "${BLUE}Environment: ${YELLOW}$ENVIRONMENT${NC}"
 echo -e "${BLUE}Region: ${YELLOW}$REGION${NC}"
-echo -e "${BLUE}Bucket: ${YELLOW}$BUCKET_NAME${NC}"
+if [ "$CI_MODE" = "true" ]; then
+    echo -e "${BLUE}Mode: ${YELLOW}CI/CD${NC}"
+else
+    echo -e "${BLUE}Profile: ${YELLOW}$PROFILE${NC}"
+fi
 echo ""
 
-# Step 1: Check and clean up failed CloudFormation stack
-echo -e "${BLUE}1️⃣ Checking CDKToolkit stack status...${NC}"
-STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
-
-echo "Current stack status: $STACK_STATUS"
-
-if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
-    echo -e "${YELLOW}🧹 Deleting failed CDKToolkit stack...${NC}"
-    aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION
-    
-    echo -e "${BLUE}⏳ Waiting for stack deletion to complete...${NC}"
-    aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION
-    echo -e "${GREEN}✅ Stack deleted successfully${NC}"
-elif [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
-    echo -e "${GREEN}✅ Stack is already in good state${NC}"
-    exit 0
+# Check if AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    echo -e "${RED}❌ AWS CLI is not installed${NC}"
+    exit 1
 fi
 
-# Step 2: Check S3 bucket
-echo -e "${BLUE}2️⃣ Checking S3 bucket status...${NC}"
-if aws s3 ls "s3://$BUCKET_NAME" >/dev/null 2>&1; then
-    echo -e "${YELLOW}⚠️ S3 bucket $BUCKET_NAME already exists${NC}"
-    
-    # Check if bucket belongs to current account
-    BUCKET_OWNER=$(aws s3api get-bucket-location --bucket $BUCKET_NAME --query 'LocationConstraint' --output text 2>/dev/null || echo "ACCESS_DENIED")
-    
-    if [ "$BUCKET_OWNER" = "ACCESS_DENIED" ]; then
-        echo -e "${RED}❌ Cannot access bucket - it may belong to another account${NC}"
-        echo -e "${YELLOW}💡 Try using a different qualifier or region${NC}"
+# Check if CDK is installed
+if ! command -v cdk &> /dev/null; then
+    echo -e "${RED}❌ AWS CDK is not installed${NC}"
+    echo -e "${YELLOW}Install with: npm install -g aws-cdk${NC}"
+    exit 1
+fi
+
+# Check AWS credentials
+echo -e "${BLUE}🔐 Checking AWS credentials...${NC}"
+if [ "$CI_MODE" = "true" ]; then
+    # In CI, credentials are provided via environment variables
+    if ! aws sts get-caller-identity > /dev/null 2>&1; then
+        echo -e "${RED}❌ AWS credentials not configured${NC}"
         exit 1
+    fi
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+else
+    # Local development with profile
+    if ! aws sts get-caller-identity --profile $PROFILE > /dev/null 2>&1; then
+        echo -e "${RED}❌ AWS credentials not configured for profile: $PROFILE${NC}"
+        exit 1
+    fi
+    ACCOUNT_ID=$(aws sts get-caller-identity --profile $PROFILE --query Account --output text)
+fi
+
+echo -e "${GREEN}✅ AWS Account: $ACCOUNT_ID${NC}"
+
+# Load environment variables
+if [ "$ENVIRONMENT" = "prod" ]; then
+    if [ -f ".env.production" ]; then
+        echo -e "${BLUE}📄 Loading production environment variables...${NC}"
+        export $(cat .env.production | grep -v '^#' | xargs)
     else
-        echo -e "${GREEN}✅ Bucket is accessible - will reuse it${NC}"
+        echo -e "${YELLOW}⚠️  .env.production not found, using defaults${NC}"
+    fi
+elif [ -f ".env" ]; then
+    echo -e "${BLUE}📄 Loading environment variables...${NC}"
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# Install dependencies (skip in CI if already cached)
+if [ "$CI_MODE" = "false" ] || [ ! -d "node_modules" ]; then
+    echo -e "${BLUE}📦 Installing dependencies...${NC}"
+    npm ci
+fi
+
+# Build TypeScript (skip in CI if already built)
+if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
+    echo -e "${BLUE}🔨 Building TypeScript...${NC}"
+    npm run build
+fi
+
+# Skip CDK bootstrap - use existing resources
+echo -e "${BLUE}🏗️  Checking CDK bootstrap resources...${NC}"
+
+# Check if CDK assets bucket exists (this is the key resource we need)
+BUCKET_NAME="cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION"
+if [ "$CI_MODE" = "true" ]; then
+    if aws s3 ls "s3://$BUCKET_NAME" >/dev/null 2>&1; then
+        echo -e "${GREEN}✅ CDK bootstrap resources available (S3 bucket exists)${NC}"
+        echo -e "${BLUE}ℹ️  Skipping bootstrap - using existing resources${NC}"
+    else
+        echo -e "${RED}❌ CDK bootstrap resources not found${NC}"
+        echo -e "${YELLOW}💡 Please run CDK bootstrap manually first${NC}"
+        exit 1
     fi
 else
-    echo -e "${GREEN}✅ S3 bucket does not exist - will create new one${NC}"
-fi
-
-# Step 3: Attempt bootstrap with different strategies
-echo -e "${BLUE}3️⃣ Attempting CDK bootstrap...${NC}"
-
-# Strategy 1: Try with --force flag
-echo -e "${BLUE}Strategy 1: Bootstrap with --force${NC}"
-if cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess 2>/dev/null; then
-    echo -e "${GREEN}✅ Bootstrap successful with --force${NC}"
-    exit 0
-fi
-
-# Strategy 2: Try with custom qualifier to avoid conflicts
-echo -e "${BLUE}Strategy 2: Bootstrap with custom qualifier${NC}"
-CUSTOM_QUALIFIER="hnb659fds$(date +%s | tail -c 5)"
-echo "Using qualifier: $CUSTOM_QUALIFIER"
-
-if cdk bootstrap aws://$ACCOUNT_ID/$REGION --qualifier $CUSTOM_QUALIFIER --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess; then
-    echo -e "${GREEN}✅ Bootstrap successful with custom qualifier${NC}"
-    echo -e "${YELLOW}⚠️ Remember to use this qualifier in your CDK app:${NC}"
-    echo -e "${YELLOW}   DefaultStackSynthesizer.DEFAULT_QUALIFIER = '$CUSTOM_QUALIFIER'${NC}"
-    exit 0
-fi
-
-# Strategy 3: Manual cleanup and retry
-echo -e "${BLUE}Strategy 3: Manual S3 cleanup and retry${NC}"
-echo -e "${YELLOW}⚠️ Attempting to empty and delete the conflicting S3 bucket...${NC}"
-
-# Empty the bucket first
-if aws s3 rm "s3://$BUCKET_NAME" --recursive 2>/dev/null; then
-    echo "Emptied bucket contents"
-fi
-
-# Delete the bucket
-if aws s3 rb "s3://$BUCKET_NAME" --force 2>/dev/null; then
-    echo "Deleted bucket"
-    
-    # Wait a bit for eventual consistency
-    sleep 10
-    
-    # Try bootstrap again
-    if cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess; then
-        echo -e "${GREEN}✅ Bootstrap successful after manual cleanup${NC}"
-        exit 0
+    # Local development with profile
+    if aws s3 ls "s3://$BUCKET_NAME" --profile $PROFILE >/dev/null 2>&1; then
+        echo -e "${GREEN}✅ CDK bootstrap resources available (S3 bucket exists)${NC}"
+        echo -e "${BLUE}ℹ️  Skipping bootstrap - using existing resources${NC}"
+    else
+        echo -e "${RED}❌ CDK bootstrap resources not found${NC}"
+        echo -e "${YELLOW}💡 Please run CDK bootstrap manually first${NC}"
+        exit 1
     fi
 fi
 
-echo -e "${RED}❌ All bootstrap strategies failed${NC}"
-echo -e "${YELLOW}💡 Manual steps required:${NC}"
-echo -e "${YELLOW}1. Go to AWS Console → S3${NC}"
-echo -e "${YELLOW}2. Delete bucket: $BUCKET_NAME${NC}"
-echo -e "${YELLOW}3. Go to CloudFormation and ensure CDKToolkit stack is deleted${NC}"
-echo -e "${YELLOW}4. Run: cdk bootstrap aws://$ACCOUNT_ID/$REGION --force${NC}"
-exit 1
+# Prepare CDK deploy command
+CDK_DEPLOY_CMD="cdk deploy --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
+
+if [ "$CI_MODE" = "false" ]; then
+    CDK_DEPLOY_CMD="$CDK_DEPLOY_CMD --profile $PROFILE"
+fi
+
+# Deploy stack
+echo -e "${BLUE}🚀 Deploying stack...${NC}"
+eval $CDK_DEPLOY_CMD
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo -e "${GREEN}✅ Deployment successful!${NC}"
+    echo ""
+    
+    # Display outputs
+    if [ -f "cdk-outputs.json" ]; then
+        echo -e "${BLUE}📋 Stack Outputs:${NC}"
+        
+        # Check if jq is available
+        if command -v jq &> /dev/null; then
+            cat cdk-outputs.json | jq -r 'to_entries[] | .value | to_entries[] | "  \(.key): \(.value)"'
+        else
+            echo "  (Install jq for formatted output)"
+            cat cdk-outputs.json
+        fi
+        echo ""
+        
+        # Extract API URL for Android app configuration
+        if command -v jq &> /dev/null; then
+            API_URL=$(cat cdk-outputs.json | jq -r '.[] | .ApiUrl // empty')
+            USER_POOL_ID=$(cat cdk-outputs.json | jq -r '.[] | .UserPoolId // empty')
+            USER_POOL_CLIENT_ID=$(cat cdk-outputs.json | jq -r '.[] | .UserPoolClientId // empty')
+            
+            if [ ! -z "$API_URL" ]; then
+                echo -e "${YELLOW}📱 Update your Android app configuration:${NC}"
+                echo -e "${YELLOW}API_BASE_URL_RELEASE=$API_URL${NC}"
+                
+                if [ ! -z "$USER_POOL_ID" ]; then
+                    echo -e "${YELLOW}USER_POOL_ID=$USER_POOL_ID${NC}"
+                fi
+                
+                if [ ! -z "$USER_POOL_CLIENT_ID" ]; then
+                    echo -e "${YELLOW}USER_POOL_CLIENT_ID=$USER_POOL_CLIENT_ID${NC}"
+                fi
+                echo ""
+            fi
+        fi
+    fi
+    
+    echo -e "${GREEN}🎉 Glaceon API is now live!${NC}"
+    
+    # In CI mode, create a summary
+    if [ "$CI_MODE" = "true" ] && [ ! -z "$GITHUB_STEP_SUMMARY" ]; then
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+        echo "- **Region:** $REGION" >> $GITHUB_STEP_SUMMARY
+        echo "- **Account:** $ACCOUNT_ID" >> $GITHUB_STEP_SUMMARY
+        
+        if [ ! -z "$API_URL" ]; then
+            echo "- **API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Deployment completed successfully!" >> $GITHUB_STEP_SUMMARY
+    fi
+    
+else
+    echo -e "${RED}❌ Deployment failed${NC}"
+    exit 1
+fi
