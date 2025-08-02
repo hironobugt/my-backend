@@ -128,23 +128,30 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
     npm run build
 fi
 
-# Bootstrap CDK (force)
-echo -e "${BLUE}🏗️  Bootstrapping CDK...${NC}"
+# Check if CDK is already bootstrapped
+echo -e "${BLUE}🏗️  Checking CDK bootstrap status...${NC}"
 if [ "$CI_MODE" = "true" ]; then
-    # Delete existing CDKToolkit if it exists but is incomplete
-    aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION || true
-    # Delete CDK S3 buckets if they exist (empty first, then remove)
-    aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive || true
-    aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION || true
-    sleep 30
-    cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
+    # Check if CDKToolkit stack exists and is in good state
+    STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
+    
+    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+        echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
+    else
+        echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
+        # Only bootstrap if needed
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
+    fi
 else
-    aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE || true
-    # Delete CDK S3 buckets if they exist (empty first, then remove)
-    aws s3 rm s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --recursive --profile $PROFILE || true
-    aws s3 rb s3://cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION --profile $PROFILE || true
-    sleep 30
-    cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
+    # Local development with profile
+    STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --profile $PROFILE --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
+    
+    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+        echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
+    else
+        echo -e "${YELLOW}⚠️  CDK bootstrap needed${NC}"
+        # Only bootstrap if needed
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
+    fi
 fi
 
 # Prepare CDK deploy command
