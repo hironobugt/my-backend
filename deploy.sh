@@ -16,6 +16,7 @@ ENVIRONMENT="dev"
 REGION="ap-northeast-1"
 PROFILE="default"
 CI_MODE=false
+FORCE_BOOTSTRAP=false
 
 # Detect CI environment
 if [ "$GITHUB_ACTIONS" = "true" ]; then
@@ -43,6 +44,10 @@ while [[ $# -gt 0 ]]; do
             PROFILE=""
             shift
             ;;
+        --force-bootstrap)
+            FORCE_BOOTSTRAP=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
@@ -50,6 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -r, --region REGION      AWS Region [default: ap-northeast-1]"
             echo "  -p, --profile PROFILE    AWS Profile [default: default]"
             echo "  --ci                     CI mode (no profile needed)"
+            echo "  --force-bootstrap        Force CDK bootstrap even if it exists"
             echo "  -h, --help              Show this help message"
             exit 0
             ;;
@@ -128,38 +134,92 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
     npm run build
 fi
 
-# Check if CDK is already bootstrapped
+# Improved CDK bootstrap check and handling
 echo -e "${BLUE}🏗️  Checking CDK bootstrap status...${NC}"
-if [ "$CI_MODE" = "true" ]; then
-    # Check if CDKToolkit stack exists
-    STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
+
+# Function to check if CDK is properly bootstrapped
+check_cdk_bootstrap() {
+    local profile_arg=""
+    if [ "$CI_MODE" = "false" ]; then
+        profile_arg="--profile $PROFILE"
+    fi
     
-    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
-        echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
-    elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
-        echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
+    # Check both CloudFormation stack and SSM parameter
+    local stack_exists=false
+    local ssm_exists=false
+    
+    # Check CloudFormation stack
+    if eval "aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION $profile_arg" > /dev/null 2>&1; then
+        local stack_status=$(eval "aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION $profile_arg --query 'Stacks[0].StackStatus' --output text")
+        if [ "$stack_status" = "CREATE_COMPLETE" ] || [ "$stack_status" = "UPDATE_COMPLETE" ]; then
+            stack_exists=true
+        fi
+    fi
+    
+    # Check SSM parameter
+    if eval "aws ssm get-parameter --name '/cdk-bootstrap/hnb659fds/version' --region $REGION $profile_arg" > /dev/null 2>&1; then
+        ssm_exists=true
+    fi
+    
+    if [ "$stack_exists" = true ] && [ "$ssm_exists" = true ]; then
+        echo "COMPLETE"
+    elif [ "$stack_exists" = true ]; then
+        echo "INCOMPLETE"
     else
-        echo -e "${YELLOW}⚠️  CDK bootstrap exists but in state: $STACK_STATUS${NC}"
-        echo -e "${BLUE}ℹ️  Attempting to proceed with existing bootstrap (safe for production)${NC}"
-        # Try to proceed with existing resources - safer for production
-        # If deployment fails, the issue will be caught at deploy stage
+        echo "NOT_EXISTS"
+    fi
+}
+
+BOOTSTRAP_STATUS=$(check_cdk_bootstrap)
+
+if [ "$BOOTSTRAP_STATUS" = "COMPLETE" ] && [ "$FORCE_BOOTSTRAP" = "false" ]; then
+    echo -e "${GREEN}✅ CDK already properly bootstrapped${NC}"
+elif [ "$BOOTSTRAP_STATUS" = "INCOMPLETE" ] || [ "$FORCE_BOOTSTRAP" = "true" ]; then
+    echo -e "${YELLOW}⚠️  CDK bootstrap incomplete or forced. Re-bootstrapping...${NC}"
+    
+    if [ "$CI_MODE" = "true" ]; then
+        # Delete existing incomplete resources first
+        echo -e "${BLUE}🧹 Cleaning up incomplete bootstrap resources...${NC}"
+        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION 2>/dev/null || true
+        
+        # Wait for deletion to complete
+        echo -e "${BLUE}⏳ Waiting for cleanup to complete...${NC}"
+        aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION 2>/dev/null || true
+        
+        # Bootstrap with force
+        echo -e "${BLUE}🚀 Bootstrapping CDK...${NC}"
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+    else
+        # Local development with profile
+        echo -e "${BLUE}🧹 Cleaning up incomplete bootstrap resources...${NC}"
+        aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE 2>/dev/null || true
+        
+        # Wait for deletion to complete
+        echo -e "${BLUE}⏳ Waiting for cleanup to complete...${NC}"
+        aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION --profile $PROFILE 2>/dev/null || true
+        
+        # Bootstrap with force
+        echo -e "${BLUE}🚀 Bootstrapping CDK...${NC}"
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
     fi
 else
-    # Local development with profile
-    STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION --profile $PROFILE --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
-    
-    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
-        echo -e "${GREEN}✅ CDK already bootstrapped successfully${NC}"
-    elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
-        echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
+    echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
+    if [ "$CI_MODE" = "true" ]; then
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
     else
-        echo -e "${YELLOW}⚠️  CDK bootstrap exists but in state: $STACK_STATUS${NC}"
-        echo -e "${BLUE}ℹ️  Attempting to proceed with existing bootstrap (safe for production)${NC}"
-        # Try to proceed with existing resources - safer for production
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
     fi
 fi
+
+# Verify bootstrap completed successfully
+echo -e "${BLUE}🔍 Verifying bootstrap completion...${NC}"
+FINAL_STATUS=$(check_cdk_bootstrap)
+if [ "$FINAL_STATUS" != "COMPLETE" ]; then
+    echo -e "${RED}❌ CDK bootstrap verification failed${NC}"
+    echo -e "${YELLOW}💡 Try running with --force-bootstrap flag${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ CDK bootstrap verified successfully${NC}"
 
 # Prepare CDK deploy command
 CDK_DEPLOY_CMD="cdk deploy --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
