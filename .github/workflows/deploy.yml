@@ -109,6 +109,31 @@ jobs:
       - name: Install AWS CDK
         run: npm install -g aws-cdk
       
+      - name: Cleanup failed CDK bootstrap (if exists)
+        run: |
+          echo "🔍 Checking CDK bootstrap status..."
+          
+          # Check if CDKToolkit stack exists and its status
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
+          
+          echo "CDKToolkit stack status: $STACK_STATUS"
+          
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
+            echo "🧹 Cleaning up failed CDKToolkit stack..."
+            aws cloudformation delete-stack --stack-name CDKToolkit --region ${{ env.AWS_REGION }}
+            
+            echo "⏳ Waiting for cleanup to complete (max 10 minutes)..."
+            timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ${{ env.AWS_REGION }} || {
+              echo "⚠️ Timeout waiting for deletion, but continuing..."
+            }
+            
+            echo "✅ Cleanup completed"
+          elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
+            echo "ℹ️ CDKToolkit stack does not exist - first time deployment"
+          else
+            echo "ℹ️ CDKToolkit stack exists with status: $STACK_STATUS"
+          fi
+      
       - name: Create environment file
         run: |
           cat > .env << EOF
@@ -121,13 +146,29 @@ jobs:
         id: deploy
         run: |
           chmod +x deploy.sh
+          
+          # Try deployment, with fallback to force bootstrap if needed
+          set +e
           ./deploy.sh --environment dev --ci
+          DEPLOY_STATUS=$?
+          set -e
+          
+          if [ $DEPLOY_STATUS -ne 0 ]; then
+            echo "⚠️ Initial deployment failed, trying with force bootstrap..."
+            ./deploy.sh --environment dev --ci --force-bootstrap
+          fi
           
           # Extract API URL from CDK outputs
           if [ -f "cdk-outputs.json" ]; then
             API_URL=$(cat cdk-outputs.json | jq -r '.[] | .ApiUrl // empty')
             echo "api-url=$API_URL" >> $GITHUB_OUTPUT
             echo "🚀 Development API URL: $API_URL"
+            
+            # Add to job summary
+            echo "## 🚀 Development Deployment Success" >> $GITHUB_STEP_SUMMARY
+            echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment:** Development" >> $GITHUB_STEP_SUMMARY
+            echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           fi
       
       - name: Comment PR with deployment info
@@ -195,6 +236,31 @@ jobs:
       - name: Install AWS CDK
         run: npm install -g aws-cdk
       
+      - name: Cleanup failed CDK bootstrap (if exists)
+        run: |
+          echo "🔍 Checking CDK bootstrap status..."
+          
+          # Check if CDKToolkit stack exists and its status
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
+          
+          echo "CDKToolkit stack status: $STACK_STATUS"
+          
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
+            echo "🧹 Cleaning up failed CDKToolkit stack..."
+            aws cloudformation delete-stack --stack-name CDKToolkit --region ${{ env.AWS_REGION }}
+            
+            echo "⏳ Waiting for cleanup to complete (max 10 minutes)..."
+            timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ${{ env.AWS_REGION }} || {
+              echo "⚠️ Timeout waiting for deletion, but continuing..."
+            }
+            
+            echo "✅ Cleanup completed"
+          elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
+            echo "ℹ️ CDKToolkit stack does not exist - first time deployment"
+          else
+            echo "ℹ️ CDKToolkit stack exists with status: $STACK_STATUS"
+          fi
+      
       - name: Create production environment file
         run: |
           cat > .env.production << EOF
@@ -206,13 +272,30 @@ jobs:
       - name: Deploy to production
         id: deploy
         run: |
+          chmod +x deploy.sh
+          
+          # Try deployment, with fallback to force bootstrap if needed
+          set +e
           ./deploy.sh --environment prod --ci
+          DEPLOY_STATUS=$?
+          set -e
+          
+          if [ $DEPLOY_STATUS -ne 0 ]; then
+            echo "⚠️ Initial deployment failed, trying with force bootstrap..."
+            ./deploy.sh --environment prod --ci --force-bootstrap
+          fi
           
           # Extract API URL from CDK outputs
           if [ -f "cdk-outputs.json" ]; then
             API_URL=$(cat cdk-outputs.json | jq -r '.[] | .ApiUrl // empty')
             echo "api-url=$API_URL" >> $GITHUB_OUTPUT
             echo "🚀 Production API URL: $API_URL"
+            
+            # Add to job summary
+            echo "## 🚀 Production Deployment Success" >> $GITHUB_STEP_SUMMARY
+            echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
+            echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           fi
       
       - name: Create GitHub Release

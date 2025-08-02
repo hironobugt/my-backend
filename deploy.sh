@@ -145,15 +145,12 @@ check_cdk_bootstrap() {
     fi
     
     # Check both CloudFormation stack and SSM parameter
-    local stack_exists=false
+    local stack_status="NOT_EXISTS"
     local ssm_exists=false
     
     # Check CloudFormation stack
     if eval "aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION $profile_arg" > /dev/null 2>&1; then
-        local stack_status=$(eval "aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION $profile_arg --query 'Stacks[0].StackStatus' --output text")
-        if [ "$stack_status" = "CREATE_COMPLETE" ] || [ "$stack_status" = "UPDATE_COMPLETE" ]; then
-            stack_exists=true
-        fi
+        stack_status=$(eval "aws cloudformation describe-stacks --stack-name CDKToolkit --region $REGION $profile_arg --query 'Stacks[0].StackStatus' --output text")
     fi
     
     # Check SSM parameter
@@ -161,53 +158,68 @@ check_cdk_bootstrap() {
         ssm_exists=true
     fi
     
-    if [ "$stack_exists" = true ] && [ "$ssm_exists" = true ]; then
-        echo "COMPLETE"
-    elif [ "$stack_exists" = true ]; then
-        echo "INCOMPLETE"
-    else
-        echo "NOT_EXISTS"
-    fi
+    case "$stack_status" in
+        "CREATE_COMPLETE"|"UPDATE_COMPLETE")
+            if [ "$ssm_exists" = true ]; then
+                echo "COMPLETE"
+            else
+                echo "INCOMPLETE"
+            fi
+            ;;
+        "ROLLBACK_COMPLETE"|"CREATE_FAILED"|"UPDATE_FAILED")
+            echo "FAILED"
+            ;;
+        "NOT_EXISTS")
+            echo "NOT_EXISTS"
+            ;;
+        *)
+            echo "UNKNOWN"
+            ;;
+    esac
 }
 
 BOOTSTRAP_STATUS=$(check_cdk_bootstrap)
 
 if [ "$BOOTSTRAP_STATUS" = "COMPLETE" ] && [ "$FORCE_BOOTSTRAP" = "false" ]; then
     echo -e "${GREEN}✅ CDK already properly bootstrapped${NC}"
-elif [ "$BOOTSTRAP_STATUS" = "INCOMPLETE" ] || [ "$FORCE_BOOTSTRAP" = "true" ]; then
-    echo -e "${YELLOW}⚠️  CDK bootstrap incomplete or forced. Re-bootstrapping...${NC}"
+elif [ "$BOOTSTRAP_STATUS" = "FAILED" ] || [ "$BOOTSTRAP_STATUS" = "INCOMPLETE" ] || [ "$FORCE_BOOTSTRAP" = "true" ]; then
+    echo -e "${YELLOW}⚠️  CDK bootstrap needs attention (Status: $BOOTSTRAP_STATUS). Re-bootstrapping...${NC}"
     
     if [ "$CI_MODE" = "true" ]; then
-        # Delete existing incomplete resources first
-        echo -e "${BLUE}🧹 Cleaning up incomplete bootstrap resources...${NC}"
+        # Delete existing failed/incomplete resources first
+        echo -e "${BLUE}🧹 Cleaning up failed/incomplete bootstrap resources...${NC}"
         aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION 2>/dev/null || true
         
-        # Wait for deletion to complete
-        echo -e "${BLUE}⏳ Waiting for cleanup to complete...${NC}"
-        aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION 2>/dev/null || true
+        # Wait for deletion to complete with timeout
+        echo -e "${BLUE}⏳ Waiting for cleanup to complete (max 10 minutes)...${NC}"
+        timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION 2>/dev/null || {
+            echo -e "${YELLOW}⚠️  Timeout waiting for deletion, but continuing...${NC}"
+        }
         
-        # Bootstrap with force
-        echo -e "${BLUE}🚀 Bootstrapping CDK...${NC}"
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+        # Bootstrap with force (existing S3 bucket will be reused)
+        echo -e "${BLUE}🚀 Bootstrapping CDK (will reuse existing S3 bucket)...${NC}"
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
     else
         # Local development with profile
-        echo -e "${BLUE}🧹 Cleaning up incomplete bootstrap resources...${NC}"
+        echo -e "${BLUE}🧹 Cleaning up failed/incomplete bootstrap resources...${NC}"
         aws cloudformation delete-stack --stack-name CDKToolkit --region $REGION --profile $PROFILE 2>/dev/null || true
         
-        # Wait for deletion to complete
-        echo -e "${BLUE}⏳ Waiting for cleanup to complete...${NC}"
-        aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION --profile $PROFILE 2>/dev/null || true
+        # Wait for deletion to complete with timeout
+        echo -e "${BLUE}⏳ Waiting for cleanup to complete (max 10 minutes)...${NC}"
+        timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region $REGION --profile $PROFILE 2>/dev/null || {
+            echo -e "${YELLOW}⚠️  Timeout waiting for deletion, but continuing...${NC}"
+        }
         
-        # Bootstrap with force
-        echo -e "${BLUE}🚀 Bootstrapping CDK...${NC}"
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+        # Bootstrap with force (existing S3 bucket will be reused)
+        echo -e "${BLUE}🚀 Bootstrapping CDK (will reuse existing S3 bucket)...${NC}"
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
     fi
 else
     echo -e "${YELLOW}⚠️  CDK bootstrap needed (first time)${NC}"
     if [ "$CI_MODE" = "true" ]; then
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --force
     else
-        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+        cdk bootstrap aws://$ACCOUNT_ID/$REGION --profile $PROFILE --force
     fi
 fi
 
