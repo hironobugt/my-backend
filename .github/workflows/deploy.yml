@@ -109,29 +109,67 @@ jobs:
       - name: Install AWS CDK
         run: npm install -g aws-cdk
       
-      - name: Cleanup failed CDK bootstrap (if exists)
+      - name: Fix CDK bootstrap issues
         run: |
-          echo "🔍 Checking CDK bootstrap status..."
+          echo "🔍 Comprehensive CDK bootstrap check and fix..."
           
-          # Check if CDKToolkit stack exists and its status
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="cdk-hnb659fds-assets-${ACCOUNT_ID}-${{ env.AWS_REGION }}"
+          
+          # Check CloudFormation stack status
           STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
-          
           echo "CDKToolkit stack status: $STACK_STATUS"
           
+          # Check S3 bucket existence
+          if aws s3 ls "s3://$BUCKET_NAME" >/dev/null 2>&1; then
+            echo "S3 bucket exists: $BUCKET_NAME"
+            BUCKET_EXISTS=true
+          else
+            echo "S3 bucket does not exist: $BUCKET_NAME"
+            BUCKET_EXISTS=false
+          fi
+          
+          # Handle different scenarios
           if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
             echo "🧹 Cleaning up failed CDKToolkit stack..."
             aws cloudformation delete-stack --stack-name CDKToolkit --region ${{ env.AWS_REGION }}
             
-            echo "⏳ Waiting for cleanup to complete (max 10 minutes)..."
+            echo "⏳ Waiting for cleanup to complete..."
             timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ${{ env.AWS_REGION }} || {
-              echo "⚠️ Timeout waiting for deletion, but continuing..."
+              echo "⚠️ Timeout waiting for deletion, continuing anyway..."
             }
             
-            echo "✅ Cleanup completed"
+            # If bucket exists but stack failed, try to reuse the bucket
+            if [ "$BUCKET_EXISTS" = true ]; then
+              echo "🔄 Attempting bootstrap with existing S3 bucket..."
+              # Use --force flag to reuse existing resources
+              cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }} --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess || {
+                echo "⚠️ Standard bootstrap failed, trying alternative approach..."
+                
+                # Alternative: Use custom qualifier to avoid conflicts
+                CUSTOM_QUALIFIER="hnb659fds$(date +%s | tail -c 5)"
+                echo "Using custom qualifier: $CUSTOM_QUALIFIER"
+                cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }} --qualifier $CUSTOM_QUALIFIER --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+                
+                # Store the qualifier for later use
+                echo "CDK_QUALIFIER=$CUSTOM_QUALIFIER" >> $GITHUB_ENV
+              }
+            else
+              echo "🚀 Standard bootstrap (no existing bucket)..."
+              cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }} --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+            fi
+            
+          elif [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+            echo "✅ CDKToolkit stack is healthy"
+            
           elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
-            echo "ℹ️ CDKToolkit stack does not exist - first time deployment"
+            echo "🚀 First time bootstrap..."
+            cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }} --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+            
           else
-            echo "ℹ️ CDKToolkit stack exists with status: $STACK_STATUS"
+            echo "⚠️ Unknown stack status: $STACK_STATUS"
+            echo "Attempting force bootstrap..."
+            cdk bootstrap aws://${ACCOUNT_ID}/${{ env.AWS_REGION }} --force --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
           fi
       
       - name: Create environment file
