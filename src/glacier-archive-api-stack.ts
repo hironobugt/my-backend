@@ -499,7 +499,17 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // 認証関連のAPI エンドポイント
     const authResource = api.root.addResource('auth');
     
-    // POST /auth/register (認証不要)
+    // POST /auth (統一された認証エンドポイント - 認証不要)
+    authResource.addMethod('POST', new apigateway.LambdaIntegration(registerFunction), {
+      methodResponses: [
+        { statusCode: '200' },
+        { statusCode: '201' },
+        { statusCode: '400' },
+        { statusCode: '500' }
+      ]
+    });
+    
+    // POST /auth/register (認証不要) - 後方互換性のため残す
     authResource
       .addResource('register')
       .addMethod('POST', new apigateway.LambdaIntegration(registerFunction), {
