@@ -83,7 +83,7 @@ else
     BUCKET_EXISTS=false
 fi
 
-# Handle different scenarios
+# Handle ROLLBACK_COMPLETE state first
 if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     echo -e "${BLUE}🧹 Cleaning up failed CDKToolkit stack...${NC}"
     
@@ -101,48 +101,91 @@ if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     else
         aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --profile $PROFILE
     fi
+    
+    echo -e "${GREEN}✅ Failed stack cleaned up${NC}"
 fi
 
-# If S3 bucket exists, try bootstrap with existing bucket
+# Now handle bootstrap based on bucket existence
 if [ "$BUCKET_EXISTS" = "true" ]; then
-    echo -e "${BLUE}🔄 Attempting bootstrap with existing S3 bucket...${NC}"
+    echo -e "${BLUE}🔄 Handling existing S3 bucket conflict...${NC}"
     
-    # Try bootstrap with existing bucket name
-    CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --bootstrap-bucket-name $BUCKET_NAME"
+    # Strategy: Temporarily rename the existing bucket, run bootstrap, then restore content
+    BACKUP_BUCKET_NAME="$BUCKET_NAME-backup-$(date +%s)"
+    
+    echo -e "${BLUE}📦 Creating backup of existing bucket content...${NC}"
+    
+    # Create a backup bucket
+    if [ "$CI_MODE" = "true" ]; then
+        aws s3 mb "s3://$BACKUP_BUCKET_NAME" --region $REGION
+        # Copy all content from original to backup
+        aws s3 sync "s3://$BUCKET_NAME" "s3://$BACKUP_BUCKET_NAME" --quiet
+        # Delete the original bucket
+        aws s3 rb "s3://$BUCKET_NAME" --force
+    else
+        aws s3 mb "s3://$BACKUP_BUCKET_NAME" --region $REGION --profile $PROFILE
+        # Copy all content from original to backup
+        aws s3 sync "s3://$BUCKET_NAME" "s3://$BACKUP_BUCKET_NAME" --quiet --profile $PROFILE
+        # Delete the original bucket
+        aws s3 rb "s3://$BUCKET_NAME" --force --profile $PROFILE
+    fi
+    
+    echo -e "${GREEN}✅ Backup created: $BACKUP_BUCKET_NAME${NC}"
+    
+    # Now run standard bootstrap
+    echo -e "${BLUE}🔄 Running CDK bootstrap with clean slate...${NC}"
+    
+    CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
     
     if [ "$CI_MODE" = "false" ]; then
         CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
     fi
     
     if eval $CDK_BOOTSTRAP_CMD; then
-        echo -e "${GREEN}✅ Bootstrap with existing bucket successful${NC}"
+        echo -e "${GREEN}✅ CDK bootstrap successful${NC}"
+        
+        # Restore the original content
+        echo -e "${BLUE}🔄 Restoring original bucket content...${NC}"
+        
+        if [ "$CI_MODE" = "true" ]; then
+            # Sync backup content to the new bootstrap bucket
+            aws s3 sync "s3://$BACKUP_BUCKET_NAME" "s3://$BUCKET_NAME" --quiet
+            # Clean up backup bucket
+            aws s3 rb "s3://$BACKUP_BUCKET_NAME" --force
+        else
+            # Sync backup content to the new bootstrap bucket
+            aws s3 sync "s3://$BACKUP_BUCKET_NAME" "s3://$BUCKET_NAME" --quiet --profile $PROFILE
+            # Clean up backup bucket
+            aws s3 rb "s3://$BACKUP_BUCKET_NAME" --force --profile $PROFILE
+        fi
+        
+        echo -e "${GREEN}✅ Original content restored and backup cleaned up${NC}"
         exit 0
     else
-        echo -e "${YELLOW}⚠️ Bootstrap with existing bucket failed, trying alternative approach...${NC}"
+        echo -e "${RED}❌ CDK bootstrap failed${NC}"
         
-        # Try with a shorter custom qualifier (8 characters max)
-        CUSTOM_QUALIFIER="hnb659fd"
-        CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --qualifier $CUSTOM_QUALIFIER"
+        # Restore the original bucket since bootstrap failed
+        echo -e "${BLUE}🔄 Restoring original bucket due to bootstrap failure...${NC}"
         
-        if [ "$CI_MODE" = "false" ]; then
-            CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
-        fi
-        
-        echo "Using custom qualifier: $CUSTOM_QUALIFIER"
-        
-        if eval $CDK_BOOTSTRAP_CMD; then
-            echo -e "${GREEN}✅ Bootstrap with custom qualifier successful${NC}"
-            exit 0
+        if [ "$CI_MODE" = "true" ]; then
+            # Recreate original bucket and restore content
+            aws s3 mb "s3://$BUCKET_NAME" --region $REGION
+            aws s3 sync "s3://$BACKUP_BUCKET_NAME" "s3://$BUCKET_NAME" --quiet
+            aws s3 rb "s3://$BACKUP_BUCKET_NAME" --force
         else
-            echo -e "${RED}❌ All bootstrap attempts failed${NC}"
-            exit 1
+            # Recreate original bucket and restore content
+            aws s3 mb "s3://$BUCKET_NAME" --region $REGION --profile $PROFILE
+            aws s3 sync "s3://$BACKUP_BUCKET_NAME" "s3://$BUCKET_NAME" --quiet --profile $PROFILE
+            aws s3 rb "s3://$BACKUP_BUCKET_NAME" --force --profile $PROFILE
         fi
+        
+        echo -e "${YELLOW}⚠️ Original bucket restored after bootstrap failure${NC}"
+        exit 1
     fi
 else
     # Standard bootstrap if no bucket exists
     echo -e "${BLUE}🔄 Running standard CDK bootstrap...${NC}"
     
-    CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION"
+    CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
     
     if [ "$CI_MODE" = "false" ]; then
         CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
