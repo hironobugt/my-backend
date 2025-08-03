@@ -132,17 +132,15 @@ fi
 QUALIFIER="glaceon" # Unique qualifier for this project's CDK resources
 echo -e "${BLUE}🏗️  Checking CDK bootstrap resources (Qualifier: $QUALIFIER)...${NC}"
 
-# Use the bootstrap fix script for more robust handling
-BOOTSTRAP_FIX_CMD="./scripts/bootstrap-fix.sh --region $REGION --qualifier $QUALIFIER"
-
+# Run bootstrap fix directly to avoid issues with `eval` and argument parsing.
+CMD_ARGS=("--region" "$REGION" "--qualifier" "$QUALIFIER")
 if [ "$CI_MODE" = "true" ]; then
-    BOOTSTRAP_FIX_CMD="$BOOTSTRAP_FIX_CMD --ci"
+    CMD_ARGS+=("--ci")
 else
-    BOOTSTRAP_FIX_CMD="$BOOTSTRAP_FIX_CMD --profile $PROFILE"
+    CMD_ARGS+=("--profile" "$PROFILE")
 fi
 
-# Run bootstrap fix
-if eval $BOOTSTRAP_FIX_CMD; then
+if ./scripts/bootstrap-fix.sh "${CMD_ARGS[@]}"; then
     echo -e "${GREEN}✅ CDK bootstrap completed successfully${NC}"
 else
     echo -e "${RED}❌ CDK bootstrap failed${NC}"
