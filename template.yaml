@@ -1,6 +1,6 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: 'Glaceon API - S3 Glacier Deep Archive API for mobile applications'
+Description: "Glaceon API - S3 Glacier Deep Archive API for mobile applications"
 
 Parameters:
   Environment:
@@ -8,13 +8,13 @@ Parameters:
     Default: dev
     AllowedValues: [dev, staging, prod]
     Description: Environment name
-  
+
   StripeSecretKey:
     Type: String
     NoEcho: true
     Description: Stripe Secret Key
     Default: sk_test_placeholder
-  
+
   StripeWebhookSecret:
     Type: String
     NoEcho: true
@@ -27,7 +27,7 @@ Globals:
     Runtime: nodejs18.x
     Environment:
       Variables:
-        NODE_OPTIONS: '--enable-source-maps'
+        NODE_OPTIONS: "--enable-source-maps"
         NODE_ENV: !Ref Environment
         STRIPE_SECRET_KEY: !Ref StripeSecretKey
         STRIPE_WEBHOOK_SECRET: !Ref StripeWebhookSecret
@@ -37,7 +37,7 @@ Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
-      UserPoolName: !Sub 'glacier-archive-users-${Environment}'
+      UserPoolName: !Sub "glacier-archive-users-${Environment}"
       AutoVerifiedAttributes:
         - email
       UsernameAttributes:
@@ -62,7 +62,7 @@ Resources:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref UserPool
-      ClientName: !Sub 'glacier-archive-client-${Environment}'
+      ClientName: !Sub "glacier-archive-client-${Environment}"
       GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
@@ -82,7 +82,7 @@ Resources:
   ArchiveMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'glacier-archive-metadata-${Environment}'
+      TableName: !Sub "glacier-archive-metadata-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -108,7 +108,7 @@ Resources:
   CustomerTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'glacier-customers-${Environment}'
+      TableName: !Sub "glacier-customers-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -132,7 +132,7 @@ Resources:
   UsageTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'glacier-usage-${Environment}'
+      TableName: !Sub "glacier-usage-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -151,7 +151,7 @@ Resources:
   UsageEventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'glacier-usage-events-${Environment}'
+      TableName: !Sub "glacier-usage-events-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -175,7 +175,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub 'glacier-archive-${Environment}-${AWS::AccountId}'
+      BucketName: !Sub "glacier-archive-${Environment}-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -185,15 +185,13 @@ Resources:
         Rules:
           - Id: DeepArchiveRule
             Status: Enabled
-            Filter:
-              Prefix: archives/
+            Prefix: archives/
             Transitions:
               - TransitionInDays: 1
                 StorageClass: DEEP_ARCHIVE
           - Id: ThumbnailRule
             Status: Enabled
-            Filter:
-              Prefix: thumbnails/
+            Prefix: thumbnails/
             Transitions:
               - TransitionInDays: 30
                 StorageClass: STANDARD_IA
@@ -204,11 +202,11 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub 'Thumbnail distribution for ${Environment}'
+        Comment: !Sub "Thumbnail distribution for ${Environment}"
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
           Compress: true
@@ -217,7 +215,7 @@ Resources:
             DomainName: !GetAtt ArchiveBucket.RegionalDomainName
             OriginPath: /thumbnails
             S3OriginConfig:
-              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}'
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}"
         PriceClass: PriceClass_100
         HttpVersion: http2
 
@@ -226,7 +224,7 @@ Resources:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
       CloudFrontOriginAccessIdentityConfig:
-        Comment: !Sub 'OAI for ${Environment} thumbnails'
+        Comment: !Sub "OAI for ${Environment} thumbnails"
 
   # S3 Bucket Policy for CloudFront
   ArchiveBucketPolicy:
@@ -238,18 +236,18 @@ Resources:
           - Sid: AllowCloudFrontAccess
             Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOriginAccessIdentity}'
+              AWS: !Sub "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOriginAccessIdentity}"
             Action: s3:GetObject
-            Resource: !Sub '${ArchiveBucket}/thumbnails/*'
+            Resource: !Sub "${ArchiveBucket}/thumbnails/*"
 
   # Lambda Functions
   UploadFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-upload-${Environment}'
+      FunctionName: !Sub "glacier-upload-${Environment}"
       CodeUri: src/
       Handler: upload.handler
-      Description: 'Upload files to Glacier Deep Archive'
+      Description: "Upload files to Glacier Deep Archive"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -279,10 +277,10 @@ Resources:
   ListFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-list-${Environment}'
+      FunctionName: !Sub "glacier-list-${Environment}"
       CodeUri: src/
       Handler: list.handler
-      Description: 'List archived files'
+      Description: "List archived files"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -308,10 +306,10 @@ Resources:
   GetFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-get-${Environment}'
+      FunctionName: !Sub "glacier-get-${Environment}"
       CodeUri: src/
       Handler: get.handler
-      Description: 'Get/restore archived files'
+      Description: "Get/restore archived files"
       Timeout: 60
       Environment:
         Variables:
@@ -337,7 +335,7 @@ Resources:
               Action:
                 - s3:RestoreObject
                 - s3:GetObjectAttributes
-              Resource: !Sub '${ArchiveBucket}/*'
+              Resource: !Sub "${ArchiveBucket}/*"
       Events:
         ApiEvent:
           Type: Api
@@ -348,10 +346,10 @@ Resources:
   DeleteFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-delete-${Environment}'
+      FunctionName: !Sub "glacier-delete-${Environment}"
       CodeUri: src/
       Handler: delete.handler
-      Description: 'Delete archived files'
+      Description: "Delete archived files"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -379,10 +377,10 @@ Resources:
   RegisterFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-register-${Environment}'
+      FunctionName: !Sub "glacier-register-${Environment}"
       CodeUri: src/
       Handler: register.handler
-      Description: 'User registration and email verification'
+      Description: "User registration and email verification"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -411,10 +409,10 @@ Resources:
   BillingFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-billing-${Environment}'
+      FunctionName: !Sub "glacier-billing-${Environment}"
       CodeUri: src/
       Handler: billing.handler
-      Description: 'Stripe billing and subscription management'
+      Description: "Stripe billing and subscription management"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -440,10 +438,10 @@ Resources:
   UsageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-usage-${Environment}'
+      FunctionName: !Sub "glacier-usage-${Environment}"
       CodeUri: src/
       Handler: usage.handler
-      Description: 'Usage tracking and reporting'
+      Description: "Usage tracking and reporting"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -471,10 +469,10 @@ Resources:
   WebhookFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-webhook-${Environment}'
+      FunctionName: !Sub "glacier-webhook-${Environment}"
       CodeUri: src/
       Handler: webhook.handler
-      Description: 'Stripe webhook processing'
+      Description: "Stripe webhook processing"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -498,10 +496,10 @@ Resources:
   ThumbnailFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-thumbnail-${Environment}'
+      FunctionName: !Sub "glacier-thumbnail-${Environment}"
       CodeUri: src/
       Handler: thumbnail-cloudfront.handler
-      Description: 'Get thumbnail URLs (CloudFront)'
+      Description: "Get thumbnail URLs (CloudFront)"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -527,10 +525,10 @@ Resources:
   ThumbnailBatchFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'glacier-thumbnail-batch-${Environment}'
+      FunctionName: !Sub "glacier-thumbnail-batch-${Environment}"
       CodeUri: src/
       Handler: thumbnail-cloudfront.handlerBatch
-      Description: 'Get multiple thumbnail URLs (CloudFront)'
+      Description: "Get multiple thumbnail URLs (CloudFront)"
       Environment:
         Variables:
           ARCHIVE_BUCKET: !Ref ArchiveBucket
@@ -558,43 +556,43 @@ Resources:
 
 Outputs:
   ApiUrl:
-    Description: 'API Gateway URL'
-    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/'
+    Description: "API Gateway URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
     Export:
-      Name: !Sub '${AWS::StackName}-ApiUrl'
+      Name: !Sub "${AWS::StackName}-ApiUrl"
 
   BucketName:
-    Description: 'S3 Archive Bucket Name'
+    Description: "S3 Archive Bucket Name"
     Value: !Ref ArchiveBucket
     Export:
-      Name: !Sub '${AWS::StackName}-BucketName'
+      Name: !Sub "${AWS::StackName}-BucketName"
 
   Region:
-    Description: 'AWS Region'
+    Description: "AWS Region"
     Value: !Ref AWS::Region
     Export:
-      Name: !Sub '${AWS::StackName}-Region'
+      Name: !Sub "${AWS::StackName}-Region"
 
   UserPoolId:
-    Description: 'Cognito User Pool ID'
+    Description: "Cognito User Pool ID"
     Value: !Ref UserPool
     Export:
-      Name: !Sub '${AWS::StackName}-UserPoolId'
+      Name: !Sub "${AWS::StackName}-UserPoolId"
 
   UserPoolClientId:
-    Description: 'Cognito User Pool Client ID'
+    Description: "Cognito User Pool Client ID"
     Value: !Ref UserPoolClient
     Export:
-      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
 
   CloudFrontDomain:
-    Description: 'CloudFront Distribution Domain for Thumbnails'
+    Description: "CloudFront Distribution Domain for Thumbnails"
     Value: !GetAtt ThumbnailDistribution.DomainName
     Export:
-      Name: !Sub '${AWS::StackName}-CloudFrontDomain'
+      Name: !Sub "${AWS::StackName}-CloudFrontDomain"
 
   CloudFrontDistributionId:
-    Description: 'CloudFront Distribution ID'
+    Description: "CloudFront Distribution ID"
     Value: !Ref ThumbnailDistribution
     Export:
-      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
