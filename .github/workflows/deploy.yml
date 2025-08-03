@@ -234,12 +234,10 @@ You can test the API endpoints now.`
       
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main'
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: api-v${{ github.run_number }}
-          release_name: API Release v${{ github.run_number }}
+          name: API Release v${{ github.run_number }}
           body: |
             🚀 **Production deployment successful!**
             
