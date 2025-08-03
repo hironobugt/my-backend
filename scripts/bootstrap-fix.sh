@@ -177,7 +177,18 @@ if [ "$BUCKET_EXISTS" = "true" ]; then
     echo -e "${BLUE}🔄 Handling existing S3 bucket conflict...${NC}"
     
     # Strategy: Temporarily rename the existing bucket, run bootstrap, then restore content
-    BACKUP_BUCKET_NAME="$BUCKET_NAME-backup-$(date +%s)"
+    # Create a shorter backup bucket name to avoid S3 63-character limit
+    TIMESTAMP=$(date +%s)
+    BACKUP_BUCKET_NAME="cdk-backup-$ACCOUNT_ID-$TIMESTAMP"
+    
+    # Ensure bucket name is within S3 limits (63 characters max)
+    if [ ${#BACKUP_BUCKET_NAME} -gt 63 ]; then
+        # Use a shorter format if needed
+        SHORT_TIMESTAMP=$(echo $TIMESTAMP | tail -c 8)  # Last 7 digits
+        BACKUP_BUCKET_NAME="cdk-bak-$ACCOUNT_ID-$SHORT_TIMESTAMP"
+    fi
+    
+    echo -e "${BLUE}📦 Backup bucket name: $BACKUP_BUCKET_NAME (${#BACKUP_BUCKET_NAME} chars)${NC}"
     
     echo -e "${BLUE}📦 Creating backup of existing bucket content...${NC}"
     
