@@ -57,24 +57,33 @@ else
 fi
 echo ""
 
-# Get AWS account ID
+# Get AWS account ID and identity info
 if [ "$CI_MODE" = "true" ]; then
     if ! aws sts get-caller-identity > /dev/null 2>&1; then
         echo -e "${RED}❌ AWS credentials not configured${NC}"
         exit 1
     fi
+    
+    # Get identity information
     ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-    AWS_CMD="aws"
+    USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+    
+    AWS_CMD="aws --region $REGION"
 else
     if ! aws sts get-caller-identity --profile $PROFILE > /dev/null 2>&1; then
         echo -e "${RED}❌ AWS credentials not configured for profile: $PROFILE${NC}"
         exit 1
     fi
+    
+    # Get identity information
     ACCOUNT_ID=$(aws sts get-caller-identity --profile $PROFILE --query Account --output text)
-    AWS_CMD="aws --profile $PROFILE"
+    USER_ARN=$(aws sts get-caller-identity --profile $PROFILE --query Arn --output text)
+    
+    AWS_CMD="aws --profile $PROFILE --region $REGION"
 fi
 
 echo -e "${GREEN}✅ AWS Account: $ACCOUNT_ID${NC}"
+echo -e "${BLUE}ℹ️  User: $USER_ARN${NC}"
 echo ""
 
 # List of CDK stacks to check and delete
@@ -100,16 +109,16 @@ for STACK_NAME in "${CDK_STACKS[@]}"; do
             echo -e "${BLUE}    🗑️  Deleting failed stack: $STACK_NAME${NC}"
             
             if [ "$CI_MODE" = "true" ]; then
-                aws cloudformation delete-stack --stack-name $STACK_NAME
+                aws cloudformation delete-stack --stack-name $STACK_NAME --region $REGION
             else
-                aws cloudformation delete-stack --stack-name $STACK_NAME --profile $PROFILE
+                aws cloudformation delete-stack --stack-name $STACK_NAME --profile $PROFILE --region $REGION
             fi
             
             echo -e "${BLUE}    ⏳ Waiting for deletion to complete...${NC}"
             if [ "$CI_MODE" = "true" ]; then
-                aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
+                aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $REGION
             else
-                aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --profile $PROFILE
+                aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --profile $PROFILE --region $REGION
             fi
             
             echo -e "${GREEN}    ✅ Stack deleted: $STACK_NAME${NC}"
@@ -205,11 +214,11 @@ for BUCKET_NAME in "${CDK_BUCKETS[@]}"; do
         
         # Empty the bucket first
         if [ "$CI_MODE" = "true" ]; then
-            aws s3 rm "s3://$BUCKET_NAME" --recursive
-            aws s3 rb "s3://$BUCKET_NAME"
+            aws s3 rm "s3://$BUCKET_NAME" --recursive --region $REGION
+            aws s3 rb "s3://$BUCKET_NAME" --region $REGION
         else
-            aws s3 rm "s3://$BUCKET_NAME" --recursive --profile $PROFILE
-            aws s3 rb "s3://$BUCKET_NAME" --profile $PROFILE
+            aws s3 rm "s3://$BUCKET_NAME" --recursive --profile $PROFILE --region $REGION
+            aws s3 rb "s3://$BUCKET_NAME" --profile $PROFILE --region $REGION
         fi
         
         echo -e "${GREEN}    ✅ Bucket deleted: $BUCKET_NAME${NC}"
@@ -235,9 +244,9 @@ for PARAM_NAME in "${CDK_PARAMETERS[@]}"; do
         echo -e "${BLUE}    🗑️  Deleting SSM parameter: $PARAM_NAME${NC}"
         
         if [ "$CI_MODE" = "true" ]; then
-            aws ssm delete-parameter --name $PARAM_NAME
+            aws ssm delete-parameter --name $PARAM_NAME --region $REGION
         else
-            aws ssm delete-parameter --name $PARAM_NAME --profile $PROFILE
+            aws ssm delete-parameter --name $PARAM_NAME --profile $PROFILE --region $REGION
         fi
         
         echo -e "${GREEN}    ✅ Parameter deleted: $PARAM_NAME${NC}"
