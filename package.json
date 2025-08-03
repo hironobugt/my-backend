@@ -12,6 +12,8 @@
         "destroy": "cdk destroy",
         "diff": "cdk diff",
         "synth": "cdk synth",
+        "bootstrap:check": "./scripts/bootstrap-check.sh",
+        "bootstrap:force": "./scripts/bootstrap-check.sh --force",
         "dev": "node server.js",
         "dev:moto": "USE_MOTO=true npm run dev",
         "dev:docker": "node server.js",

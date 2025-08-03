@@ -128,30 +128,24 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
     npm run build
 fi
 
-# Skip CDK bootstrap - use existing resources
+# CDK Bootstrap Management
 echo -e "${BLUE}🏗️  Checking CDK bootstrap resources...${NC}"
 
-# Check if CDK assets bucket exists (this is the key resource we need)
-BUCKET_NAME="cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION"
+# Use the bootstrap check script
+BOOTSTRAP_CHECK_CMD="./scripts/bootstrap-check.sh --region $REGION"
+
 if [ "$CI_MODE" = "true" ]; then
-    if aws s3 ls "s3://$BUCKET_NAME" >/dev/null 2>&1; then
-        echo -e "${GREEN}✅ CDK bootstrap resources available (S3 bucket exists)${NC}"
-        echo -e "${BLUE}ℹ️  Skipping bootstrap - using existing resources${NC}"
-    else
-        echo -e "${RED}❌ CDK bootstrap resources not found${NC}"
-        echo -e "${YELLOW}💡 Please run CDK bootstrap manually first${NC}"
-        exit 1
-    fi
+    BOOTSTRAP_CHECK_CMD="$BOOTSTRAP_CHECK_CMD --ci"
 else
-    # Local development with profile
-    if aws s3 ls "s3://$BUCKET_NAME" --profile $PROFILE >/dev/null 2>&1; then
-        echo -e "${GREEN}✅ CDK bootstrap resources available (S3 bucket exists)${NC}"
-        echo -e "${BLUE}ℹ️  Skipping bootstrap - using existing resources${NC}"
-    else
-        echo -e "${RED}❌ CDK bootstrap resources not found${NC}"
-        echo -e "${YELLOW}💡 Please run CDK bootstrap manually first${NC}"
-        exit 1
-    fi
+    BOOTSTRAP_CHECK_CMD="$BOOTSTRAP_CHECK_CMD --profile $PROFILE"
+fi
+
+# Run bootstrap check
+if eval $BOOTSTRAP_CHECK_CMD; then
+    echo -e "${GREEN}✅ CDK bootstrap check completed successfully${NC}"
+else
+    echo -e "${RED}❌ CDK bootstrap check failed${NC}"
+    exit 1
 fi
 
 # Prepare CDK deploy command
