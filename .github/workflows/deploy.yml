@@ -1,260 +1,107 @@
-name: Deploy Glaceon API
+name: Deploy SAM Application
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [ main, develop ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - prod
 
 env:
   AWS_REGION: ap-northeast-1
-  NODE_VERSION: '20'
+  STACK_NAME: glaceon-api-dev
 
 jobs:
-  test:
-    name: Test & Build
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build TypeScript
-        run: npm run build
-      
-      - name: Lint code
-        run: npm run lint || echo "Linting skipped - no lint script"
-      
-      - name: Run tests
-        run: npm test || echo "Tests skipped - no test script"
-      
-      - name: Cache build artifacts
-        uses: actions/cache@v3
-        with:
-          path: |
-            lib
-            node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-  deploy-dev:
-    name: Deploy to Development
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
-    environment: 
-      name: development
-      url: ${{ steps.deploy.outputs.api-url }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-      
-      - name: Restore build cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            lib
-            node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
-      
-      - name: Install dependencies (if cache miss)
-        run: |
-          if [ ! -d "node_modules" ]; then
-            npm ci
-          fi
-      
-      - name: Build TypeScript (if cache miss)
-        run: |
-          if [ ! -d "lib" ]; then
-            npm run build
-          fi
-      
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Install AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
-      
-      - name: Create environment file
-        run: |
-          cat > .env << EOF
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY_DEV }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET_DEV }}
-          NODE_ENV=development
-          EOF
-      
-      - name: Deploy to development
-        id: deploy
-        run: |
-          chmod +x deploy-sam.sh
-          ./deploy-sam.sh --environment dev --ci
-          
-          # Extract API URL from SAM outputs
-          if [ -f "sam-outputs.json" ]; then
-            API_URL=$(cat sam-outputs.json | jq -r '.GlaceonApiStack.ApiUrl // empty')
-            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-            echo "🚀 Development API URL: $API_URL"
-            
-            # Add to job summary
-            echo "## 🚀 Development Deployment Success" >> $GITHUB_STEP_SUMMARY
-            echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment:** Development" >> $GITHUB_STEP_SUMMARY
-            echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          fi
-      
-      - name: Comment PR with deployment info
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const apiUrl = '${{ steps.deploy.outputs.api-url }}';
-            if (apiUrl) {
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `🚀 **Development deployment successful!**
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
 
-  deploy-prod:
-    name: Deploy to Production
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod')
-    environment: 
-      name: production
-      url: ${{ steps.deploy.outputs.api-url }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-      
-      - name: Restore build cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            lib
-            node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
-      
-      - name: Install dependencies (if cache miss)
-        run: |
-          if [ ! -d "node_modules" ]; then
-            npm ci
-          fi
-      
-      - name: Build TypeScript (if cache miss)
-        run: |
-          if [ ! -d "lib" ]; then
-            npm run build
-          fi
-      
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Install AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
-      
-      - name: Create production environment file
-        run: |
-          cat > .env.production << EOF
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY_PROD }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET_PROD }}
-          NODE_ENV=production
-          EOF
-      
-      - name: Deploy to production
-        id: deploy
-        run: |
-          chmod +x deploy-sam.sh
-          ./deploy-sam.sh --environment prod --ci
-          
-          # Extract API URL from SAM outputs
-          if [ -f "sam-outputs.json" ]; then
-            API_URL=$(cat sam-outputs.json | jq -r '.GlaceonApiStack.ApiUrl // empty')
-            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-            echo "🚀 Production API URL: $API_URL"
-            
-            # Add to job summary
-            echo "## 🚀 Production Deployment Success" >> $GITHUB_STEP_SUMMARY
-            echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
-            echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          fi
-      
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: api-v${{ github.run_number }}
-          name: API Release v${{ github.run_number }}
-          body: |
-            🚀 **Production deployment successful!**
-            
-            **API URL:** ${{ steps.deploy.outputs.api-url }}
-            
-            **Changes in this release:**
-            ${{ github.event.head_commit.message }}
-            
-            **Commit:** ${{ github.sha }}
-          draft: false
-          prerelease: false
+    - name: Install dependencies
+      run: |
+        cd src
+        npm ci --production
 
-  cleanup:
-    name: Cleanup
-    runs-on: ubuntu-latest
-    if: always()
-    needs: [deploy-dev, deploy-prod]
-    
-    steps:
-      - name: Cleanup temporary files
-        run: |
-          rm -f .env .env.production cdk-outputs.json || true
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Setup SAM CLI
+      uses: aws-actions/setup-sam@v2
+      with:
+        use-installer: true
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Validate SAM template
+      run: sam validate --template-file template.yaml
+
+    - name: Build SAM application
+      run: sam build --template-file template.yaml
+
+    - name: Check if stack exists and delete if in failed state
+      run: |
+        STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+        echo "Current stack status: $STACK_STATUS"
+        
+        if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "ROLLBACK_FAILED" ]; then
+          echo "Stack is in failed state ($STACK_STATUS). Deleting stack..."
+          aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
+          echo "Waiting for stack deletion to complete..."
+          aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
+          echo "Stack deleted successfully"
+        elif [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
+          echo "Stack does not exist. Will create new stack."
+        else
+          echo "Stack exists in good state ($STACK_STATUS). Will update."
+        fi
+
+    - name: Deploy SAM application
+      run: |
+        sam deploy \
+          --template-file template.yaml \
+          --stack-name ${{ env.STACK_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --capabilities CAPABILITY_IAM \
+          --parameter-overrides \
+            Environment=dev \
+            StripeSecretKey=${{ secrets.STRIPE_SECRET_KEY }} \
+            StripeWebhookSecret=${{ secrets.STRIPE_WEBHOOK_SECRET }} \
+          --no-confirm-changeset \
+          --no-fail-on-empty-changeset \
+          --resolve-s3
+
+    - name: Get stack outputs
+      run: |
+        echo "=== Stack Outputs ==="
+        aws cloudformation describe-stacks \
+          --stack-name ${{ env.STACK_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Stacks[0].Outputs' \
+          --output table
+
+    - name: Test API endpoint
+      run: |
+        API_URL=$(aws cloudformation describe-stacks \
+          --stack-name ${{ env.STACK_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+          --output text)
+        echo "API URL: $API_URL"
+        
+        # Basic health check (optional)
+        # curl -f "$API_URL/health" || echo "Health check endpoint not available"
