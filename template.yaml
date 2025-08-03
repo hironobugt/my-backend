@@ -37,12 +37,11 @@ Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
-      UserPoolName: !Sub "glacier-archive-users-${Environment}"
+      UserPoolName: !Sub "glaceon-archive-users-${Environment}"
       AutoVerifiedAttributes:
         - email
       UsernameAttributes:
         - email
-        - username
       EmailConfiguration:
         EmailSendingAccount: COGNITO_DEFAULT
       Policies:
@@ -62,7 +61,7 @@ Resources:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref UserPool
-      ClientName: !Sub "glacier-archive-client-${Environment}"
+      ClientName: !Sub "glaceon-archive-client-${Environment}"
       GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
@@ -82,7 +81,7 @@ Resources:
   ArchiveMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "glacier-archive-metadata-${Environment}"
+      TableName: !Sub "glaceon-archive-metadata-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -108,7 +107,7 @@ Resources:
   CustomerTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "glacier-customers-${Environment}"
+      TableName: !Sub "glaceon-customers-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -132,7 +131,7 @@ Resources:
   UsageTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "glacier-usage-${Environment}"
+      TableName: !Sub "glaceon-usage-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -151,7 +150,7 @@ Resources:
   UsageEventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "glacier-usage-events-${Environment}"
+      TableName: !Sub "glaceon-usage-events-${Environment}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: userId
@@ -169,13 +168,13 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # S3 Bucket for Archives (FIXED: Removed Filter property)
+  # S3 Bucket for Archives (FIXED: Removed Filter property and changed naming)
   ArchiveBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "glacier-archive-${Environment}-${AWS::AccountId}"
+      BucketName: !Sub "glaceon-archive-${Environment}-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true

@@ -55,6 +55,7 @@ jobs:
 
     - name: Check if stack exists and delete if in failed state
       run: |
+        # Check current stack
         STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
         echo "Current stack status: $STACK_STATUS"
         
@@ -68,6 +69,15 @@ jobs:
           echo "Stack does not exist. Will create new stack."
         else
           echo "Stack exists in good state ($STACK_STATUS). Will update."
+        fi
+        
+        # Check and delete old conflicting stack if exists
+        OLD_STACK_STATUS=$(aws cloudformation describe-stacks --stack-name GlacierArchiveApiStack --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+        echo "Old stack (GlacierArchiveApiStack) status: $OLD_STACK_STATUS"
+        
+        if [ "$OLD_STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+          echo "Found conflicting old stack. Manual intervention may be required."
+          echo "Consider deleting GlacierArchiveApiStack manually or using different resource names."
         fi
 
     - name: Create deployment bucket if needed
