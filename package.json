@@ -18,6 +18,7 @@
         "sam:deploy": "./deploy-sam.sh",
         "sam:deploy:dev": "./deploy-sam.sh --environment dev",
         "sam:deploy:prod": "./deploy-sam.sh --environment prod",
+        "cleanup:cdk": "./scripts/cleanup-cdk.sh",
         "dev": "node server.js",
         "dev:moto": "USE_MOTO=true npm run dev",
         "dev:docker": "node server.js",

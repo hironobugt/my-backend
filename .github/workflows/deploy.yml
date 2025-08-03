@@ -6,6 +6,20 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      cleanup_cdk_first:
+        description: 'Cleanup CDK resources before deployment'
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ap-northeast-1
