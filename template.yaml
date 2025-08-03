@@ -172,6 +172,8 @@ Resources:
   # S3 Bucket for Archives
   ArchiveBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub 'glacier-archive-${Environment}-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
@@ -195,8 +197,6 @@ Resources:
             Transitions:
               - TransitionInDays: 30
                 StorageClass: STANDARD_IA
-      DeletionPolicy: Retain
-      UpdateReplacePolicy: Retain
 
   # CloudFront Distribution for Thumbnails
   ThumbnailDistribution:
@@ -273,11 +273,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/upload
             Method: post
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   ListFunction:
     Type: AWS::Serverless::Function
@@ -305,11 +302,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/list
             Method: get
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   GetFunction:
     Type: AWS::Serverless::Function
@@ -348,11 +342,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/{archiveId}
             Method: get
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   DeleteFunction:
     Type: AWS::Serverless::Function
@@ -382,11 +373,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/{archiveId}
             Method: delete
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   RegisterFunction:
     Type: AWS::Serverless::Function
@@ -412,13 +400,11 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /auth
             Method: post
         ApiEventLegacy:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /auth/register
             Method: post
 
@@ -448,11 +434,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /billing
             Method: post
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   UsageFunction:
     Type: AWS::Serverless::Function
@@ -482,11 +465,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /usage
             Method: post
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   WebhookFunction:
     Type: AWS::Serverless::Function
@@ -512,7 +492,6 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /webhook/stripe
             Method: post
 
@@ -542,11 +521,8 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/{archiveId}/thumbnail
             Method: get
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   ThumbnailBatchFunction:
     Type: AWS::Serverless::Function
@@ -574,38 +550,16 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref GlacierArchiveApi
             Path: /archive/thumbnails/batch
             Method: post
-            Auth:
-              Authorizer: CognitoAuthorizer
 
-  # API Gateway
-  GlacierArchiveApi:
-    Type: AWS::Serverless::Api
-    Properties:
-      Name: !Sub 'glacier-archive-api-${Environment}'
-      StageName: !Ref Environment
-      Description: 'S3 Glacier Deep Archive API for mobile applications'
-      Cors:
-        AllowMethods: "'*'"
-        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-        AllowOrigin: "'*'"
-      Auth:
-        Authorizers:
-          CognitoAuthorizer:
-            UserPoolArn: !GetAtt UserPool.Arn
-            Identity:
-              Header: Authorization
-        DefaultAuthorizer: CognitoAuthorizer
-      ThrottleConfig:
-        RateLimit: 100
-        BurstLimit: 200
+  # API Gateway (Implicit)
+  # SAM will create an implicit API Gateway for us
 
 Outputs:
   ApiUrl:
     Description: 'API Gateway URL'
-    Value: !Sub 'https://${GlacierArchiveApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/'
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/'
     Export:
       Name: !Sub '${AWS::StackName}-ApiUrl'
 
