@@ -274,31 +274,6 @@ jobs:
       - name: Install AWS CDK
         run: npm install -g aws-cdk
       
-      - name: Cleanup failed CDK bootstrap (if exists)
-        run: |
-          echo "🔍 Checking CDK bootstrap status..."
-          
-          # Check if CDKToolkit stack exists and its status
-          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --region ${{ env.AWS_REGION }} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
-          
-          echo "CDKToolkit stack status: $STACK_STATUS"
-          
-          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
-            echo "🧹 Cleaning up failed CDKToolkit stack..."
-            aws cloudformation delete-stack --stack-name CDKToolkit --region ${{ env.AWS_REGION }}
-            
-            echo "⏳ Waiting for cleanup to complete (max 10 minutes)..."
-            timeout 600 aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region ${{ env.AWS_REGION }} || {
-              echo "⚠️ Timeout waiting for deletion, but continuing..."
-            }
-            
-            echo "✅ Cleanup completed"
-          elif [ "$STACK_STATUS" = "NOT_EXISTS" ]; then
-            echo "ℹ️ CDKToolkit stack does not exist - first time deployment"
-          else
-            echo "ℹ️ CDKToolkit stack exists with status: $STACK_STATUS"
-          fi
-      
       - name: Create production environment file
         run: |
           cat > .env.production << EOF

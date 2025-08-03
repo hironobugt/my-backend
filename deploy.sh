@@ -129,10 +129,11 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
 fi
 
 # CDK Bootstrap Management
-echo -e "${BLUE}🏗️  Checking CDK bootstrap resources...${NC}"
+QUALIFIER="glaceon" # Unique qualifier for this project's CDK resources
+echo -e "${BLUE}🏗️  Checking CDK bootstrap resources (Qualifier: $QUALIFIER)...${NC}"
 
 # Use the bootstrap fix script for more robust handling
-BOOTSTRAP_FIX_CMD="./scripts/bootstrap-fix.sh --region $REGION"
+BOOTSTRAP_FIX_CMD="./scripts/bootstrap-fix.sh --region $REGION --qualifier $QUALIFIER"
 
 if [ "$CI_MODE" = "true" ]; then
     BOOTSTRAP_FIX_CMD="$BOOTSTRAP_FIX_CMD --ci"
@@ -149,7 +150,7 @@ else
 fi
 
 # Prepare CDK deploy command
-CDK_DEPLOY_CMD="cdk deploy --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
+CDK_DEPLOY_CMD="cdk deploy --qualifier $QUALIFIER --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
 
 if [ "$CI_MODE" = "false" ]; then
     CDK_DEPLOY_CMD="$CDK_DEPLOY_CMD --profile $PROFILE"
