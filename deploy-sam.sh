@@ -148,7 +148,7 @@ STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-"whsec_placeholder"}
 PARAMETER_OVERRIDES="Environment=$ENVIRONMENT StripeSecretKey=$STRIPE_SECRET_KEY StripeWebhookSecret=$STRIPE_WEBHOOK_SECRET"
 
 # Prepare SAM deploy command
-SAM_DEPLOY_CMD="sam deploy --template-file template.yaml --stack-name $STACK_NAME --region $REGION --capabilities CAPABILITY_IAM --parameter-overrides $PARAMETER_OVERRIDES --no-confirm-changeset --no-fail-on-empty-changeset"
+SAM_DEPLOY_CMD="sam deploy --template-file template.yaml --stack-name $STACK_NAME --region $REGION --capabilities CAPABILITY_IAM --parameter-overrides $PARAMETER_OVERRIDES --no-confirm-changeset --no-fail-on-empty-changeset --resolve-s3"
 
 if [ "$CI_MODE" = "false" ]; then
     SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --profile $PROFILE"
