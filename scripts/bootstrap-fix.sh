@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 REGION="ap-northeast-1"
 PROFILE="default"
 CI_MODE=false
+QUALIFIER=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,10 @@ while [[ $# -gt 0 ]]; do
             PROFILE="$2"
             shift 2
             ;;
+        --qualifier)
+            QUALIFIER="$2"
+            shift 2
+            ;;
         --ci)
             CI_MODE=true
             PROFILE=""
@@ -37,6 +42,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  -r, --region REGION      AWS Region [default: ap-northeast-1]"
             echo "  -p, --profile PROFILE    AWS Profile [default: default]"
+            echo "  --qualifier QUALIFIER    CDK Bootstrap qualifier"
             echo "  --ci                     CI mode (no profile needed)"
             echo "  -h, --help              Show this help message"
             exit 0
@@ -67,8 +73,14 @@ else
     AWS_CMD="aws --profile $PROFILE"
 fi
 
-BUCKET_NAME="cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION"
-STACK_NAME="CDKToolkit"
+# Set bucket name and stack name based on qualifier
+if [ -n "$QUALIFIER" ]; then
+    BUCKET_NAME="cdk-$QUALIFIER-assets-$ACCOUNT_ID-$REGION"
+    STACK_NAME="CDKToolkit-$QUALIFIER"
+else
+    BUCKET_NAME="cdk-hnb659fds-assets-$ACCOUNT_ID-$REGION"
+    STACK_NAME="CDKToolkit"
+fi
 
 # Check CloudFormation stack status
 STACK_STATUS=$(eval "$AWS_CMD cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackStatus' --output text" 2>/dev/null || echo "NOT_FOUND")
@@ -113,6 +125,10 @@ if [ "$NEEDS_FIX" = "false" ] && [ "$STACK_STATUS" = "NOT_FOUND" ] && [ "$BUCKET
     echo -e "${BLUE}🔄 Running standard CDK bootstrap...${NC}"
     
     CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
+    
+    if [ -n "$QUALIFIER" ]; then
+        CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --qualifier $QUALIFIER"
+    fi
     
     if [ "$CI_MODE" = "false" ]; then
         CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
@@ -187,6 +203,10 @@ if [ "$BUCKET_EXISTS" = "true" ]; then
     
     CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
     
+    if [ -n "$QUALIFIER" ]; then
+        CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --qualifier $QUALIFIER"
+    fi
+    
     if [ "$CI_MODE" = "false" ]; then
         CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
     fi
@@ -237,6 +257,10 @@ else
     echo -e "${BLUE}🔄 Running standard CDK bootstrap...${NC}"
     
     CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
+    
+    if [ -n "$QUALIFIER" ]; then
+        CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --qualifier $QUALIFIER"
+    fi
     
     if [ "$CI_MODE" = "false" ]; then
         CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
