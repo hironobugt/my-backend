@@ -70,6 +70,13 @@ jobs:
           echo "Stack exists in good state ($STACK_STATUS). Will update."
         fi
 
+    - name: Create deployment bucket if needed
+      run: |
+        BUCKET_NAME="sam-deploy-$(date +%s)-${{ github.run_number }}"
+        echo "Creating deployment bucket: $BUCKET_NAME"
+        aws s3 mb s3://$BUCKET_NAME --region ${{ env.AWS_REGION }}
+        echo "DEPLOYMENT_BUCKET=$BUCKET_NAME" >> $GITHUB_ENV
+
     - name: Deploy SAM application
       run: |
         # Set default values if secrets are not provided
@@ -93,9 +100,18 @@ jobs:
             Environment=dev \
             StripeSecretKey="$STRIPE_SECRET_KEY" \
             StripeWebhookSecret="$STRIPE_WEBHOOK_SECRET" \
+          --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
           --no-confirm-changeset \
-          --no-fail-on-empty-changeset \
-          --resolve-s3
+          --no-fail-on-empty-changeset
+
+    - name: Cleanup deployment bucket
+      if: always()
+      run: |
+        if [ ! -z "${{ env.DEPLOYMENT_BUCKET }}" ]; then
+          echo "Cleaning up deployment bucket: ${{ env.DEPLOYMENT_BUCKET }}"
+          aws s3 rm s3://${{ env.DEPLOYMENT_BUCKET }} --recursive || true
+          aws s3 rb s3://${{ env.DEPLOYMENT_BUCKET }} || true
+        fi
 
     - name: Get stack outputs
       run: |
