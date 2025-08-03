@@ -131,20 +131,20 @@ fi
 # CDK Bootstrap Management
 echo -e "${BLUE}🏗️  Checking CDK bootstrap resources...${NC}"
 
-# Use the bootstrap check script
-BOOTSTRAP_CHECK_CMD="./scripts/bootstrap-check.sh --region $REGION"
+# Use the bootstrap fix script for more robust handling
+BOOTSTRAP_FIX_CMD="./scripts/bootstrap-fix.sh --region $REGION"
 
 if [ "$CI_MODE" = "true" ]; then
-    BOOTSTRAP_CHECK_CMD="$BOOTSTRAP_CHECK_CMD --ci"
+    BOOTSTRAP_FIX_CMD="$BOOTSTRAP_FIX_CMD --ci"
 else
-    BOOTSTRAP_CHECK_CMD="$BOOTSTRAP_CHECK_CMD --profile $PROFILE"
+    BOOTSTRAP_FIX_CMD="$BOOTSTRAP_FIX_CMD --profile $PROFILE"
 fi
 
-# Run bootstrap check
-if eval $BOOTSTRAP_CHECK_CMD; then
-    echo -e "${GREEN}✅ CDK bootstrap check completed successfully${NC}"
+# Run bootstrap fix
+if eval $BOOTSTRAP_FIX_CMD; then
+    echo -e "${GREEN}✅ CDK bootstrap completed successfully${NC}"
 else
-    echo -e "${RED}❌ CDK bootstrap check failed${NC}"
+    echo -e "${RED}❌ CDK bootstrap failed${NC}"
     exit 1
 fi
 
