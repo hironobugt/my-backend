@@ -15,7 +15,6 @@ NC='\033[0m' # No Color
 REGION="ap-northeast-1"
 PROFILE="default"
 CI_MODE=false
-QUALIFIER=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -28,10 +27,6 @@ while [[ $# -gt 0 ]]; do
             PROFILE="$2"
             shift 2
             ;;
-        --qualifier)
-            QUALIFIER="$2"
-            shift 2
-            ;;
         --ci)
             CI_MODE=true
             PROFILE=""
@@ -42,7 +37,6 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  -r, --region REGION      AWS Region [default: ap-northeast-1]"
             echo "  -p, --profile PROFILE    AWS Profile [default: default]"
-            echo "  --qualifier QUALIFIER    CDK Bootstrap qualifier"
             echo "  --ci                     CI mode (no profile needed)"
             echo "  -h, --help              Show this help message"
             exit 0
@@ -73,12 +67,8 @@ else
     AWS_CMD="aws --profile $PROFILE"
 fi
 
-# Set stack name based on qualifier
-if [ -n "$QUALIFIER" ]; then
-    STACK_NAME="CDKToolkit-$QUALIFIER"
-else
-    STACK_NAME="CDKToolkit"
-fi
+# Use default CDK stack name
+STACK_NAME="CDKToolkit"
 
 # Check CloudFormation stack status
 STACK_STATUS=$(eval "$AWS_CMD cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackStatus' --output text" 2>/dev/null || echo "NOT_FOUND")
@@ -119,10 +109,6 @@ fi
 echo -e "${BLUE}🔄 Running CDK bootstrap...${NC}"
 
 CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION"
-
-if [ -n "$QUALIFIER" ]; then
-    CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --qualifier $QUALIFIER"
-fi
 
 if [ "$CI_MODE" = "false" ]; then
     CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"

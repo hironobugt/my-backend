@@ -129,21 +129,21 @@ if [ "$CI_MODE" = "false" ] || [ ! -d "lib" ]; then
 fi
 
 # CDK Bootstrap Management
-QUALIFIER="glaceon" # Unique qualifier for this project's CDK resources
-echo -e "${BLUE}🏗️  Checking CDK bootstrap resources (Qualifier: $QUALIFIER)...${NC}"
+echo -e "${BLUE}🏗️  Checking CDK bootstrap resources...${NC}"
 
-# Run bootstrap fix directly to avoid issues with `eval` and argument parsing.
-CMD_ARGS=("--region" "$REGION" "--qualifier" "$QUALIFIER")
+# First, try to bootstrap with the default qualifier (which CDK is looking for)
+DEFAULT_CMD_ARGS=("--region" "$REGION")
 if [ "$CI_MODE" = "true" ]; then
-    CMD_ARGS+=("--ci")
+    DEFAULT_CMD_ARGS+=("--ci")
 else
-    CMD_ARGS+=("--profile" "$PROFILE")
+    DEFAULT_CMD_ARGS+=("--profile" "$PROFILE")
 fi
 
-if ./scripts/bootstrap-fix.sh "${CMD_ARGS[@]}"; then
-    echo -e "${GREEN}✅ CDK bootstrap completed successfully${NC}"
+echo -e "${BLUE}🔄 Ensuring default CDK bootstrap...${NC}"
+if ./scripts/bootstrap-fix.sh "${DEFAULT_CMD_ARGS[@]}"; then
+    echo -e "${GREEN}✅ Default CDK bootstrap completed successfully${NC}"
 else
-    echo -e "${RED}❌ CDK bootstrap failed${NC}"
+    echo -e "${RED}❌ Default CDK bootstrap failed${NC}"
     exit 1
 fi
 
