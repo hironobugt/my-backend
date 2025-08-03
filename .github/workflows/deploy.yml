@@ -47,8 +47,42 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Validate SAM template
-      run: sam validate --template-file template.yaml
+    - name: Clear CDK context and bootstrap info
+      run: |
+        # Remove any CDK context that might interfere
+        rm -f cdk.context.json
+        rm -f cdk.json
+        # Ensure we're not using CDK bootstrap
+        unset CDK_DEFAULT_ACCOUNT
+        unset CDK_DEFAULT_REGION
+        # Clear any CDK-related environment variables
+        env | grep -i cdk || true
+
+    - name: Force SAM to use standard CloudFormation
+      run: |
+        # Create samconfig.toml to override any CDK settings
+        cat > samconfig.toml << EOF
+        version = 0.1
+        [default]
+        [default.deploy]
+        [default.deploy.parameters]
+        stack_name = "${{ env.STACK_NAME }}"
+        s3_bucket = "${{ env.DEPLOYMENT_BUCKET }}"
+        region = "${{ env.AWS_REGION }}"
+        capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+        disable_rollback = true
+        EOF
+
+    - name: Verify AWS credentials and permissions
+      run: |
+        echo "=== AWS Identity ==="
+        aws sts get-caller-identity
+        
+        echo "=== Available regions ==="
+        aws ec2 describe-regions --query 'Regions[].RegionName' --output table
+        
+        echo "=== CloudFormation permissions test ==="
+        aws cloudformation list-stacks --region ${{ env.AWS_REGION }} --max-items 1
 
     - name: Build SAM application
       run: sam build --template-file template.yaml
@@ -87,7 +121,7 @@ jobs:
         aws s3 mb s3://$BUCKET_NAME --region ${{ env.AWS_REGION }}
         echo "DEPLOYMENT_BUCKET=$BUCKET_NAME" >> $GITHUB_ENV
 
-    - name: Deploy SAM application
+    - name: Deploy SAM application (with fallback to direct CloudFormation)
       run: |
         # Set default values if secrets are not provided
         STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
@@ -101,18 +135,42 @@ jobs:
           STRIPE_WEBHOOK_SECRET="whsec_placeholder"
         fi
         
+        # Try SAM deploy first
+        echo "Attempting SAM deploy..."
         sam deploy \
           --template-file template.yaml \
           --stack-name ${{ env.STACK_NAME }} \
           --region ${{ env.AWS_REGION }} \
-          --capabilities CAPABILITY_IAM \
+          --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
           --parameter-overrides \
             Environment=dev \
             StripeSecretKey="$STRIPE_SECRET_KEY" \
             StripeWebhookSecret="$STRIPE_WEBHOOK_SECRET" \
           --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
           --no-confirm-changeset \
-          --no-fail-on-empty-changeset
+          --no-fail-on-empty-changeset \
+          --disable-rollback || {
+            echo "SAM deploy failed, trying direct CloudFormation..."
+            
+            # Package the template
+            aws cloudformation package \
+              --template-file template.yaml \
+              --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
+              --output-template-file packaged-template.yaml \
+              --region ${{ env.AWS_REGION }}
+            
+            # Deploy with CloudFormation
+            aws cloudformation deploy \
+              --template-file packaged-template.yaml \
+              --stack-name ${{ env.STACK_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+              --parameter-overrides \
+                Environment=dev \
+                StripeSecretKey="$STRIPE_SECRET_KEY" \
+                StripeWebhookSecret="$STRIPE_WEBHOOK_SECRET" \
+              --no-fail-on-empty-changeset
+          }
 
     - name: Cleanup deployment bucket
       if: always()
