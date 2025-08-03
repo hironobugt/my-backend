@@ -150,7 +150,7 @@ else
 fi
 
 # Prepare CDK deploy command
-CDK_DEPLOY_CMD="cdk deploy --qualifier $QUALIFIER --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
+CDK_DEPLOY_CMD="cdk deploy --qualifier $QUALIFIER --context @aws-cdk/core:bootstrapQualifier=$QUALIFIER --context environment=$ENVIRONMENT --require-approval never --outputs-file cdk-outputs.json"
 
 if [ "$CI_MODE" = "false" ]; then
     CDK_DEPLOY_CMD="$CDK_DEPLOY_CMD --profile $PROFILE"
