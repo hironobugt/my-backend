@@ -72,6 +72,18 @@ jobs:
 
     - name: Deploy SAM application
       run: |
+        # Set default values if secrets are not provided
+        STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
+        STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+        
+        if [ -z "$STRIPE_SECRET_KEY" ]; then
+          STRIPE_SECRET_KEY="sk_test_placeholder"
+        fi
+        
+        if [ -z "$STRIPE_WEBHOOK_SECRET" ]; then
+          STRIPE_WEBHOOK_SECRET="whsec_placeholder"
+        fi
+        
         sam deploy \
           --template-file template.yaml \
           --stack-name ${{ env.STACK_NAME }} \
@@ -79,8 +91,8 @@ jobs:
           --capabilities CAPABILITY_IAM \
           --parameter-overrides \
             Environment=dev \
-            StripeSecretKey=${{ secrets.STRIPE_SECRET_KEY }} \
-            StripeWebhookSecret=${{ secrets.STRIPE_WEBHOOK_SECRET }} \
+            StripeSecretKey="$STRIPE_SECRET_KEY" \
+            StripeWebhookSecret="$STRIPE_WEBHOOK_SECRET" \
           --no-confirm-changeset \
           --no-fail-on-empty-changeset \
           --resolve-s3
