@@ -151,14 +151,6 @@ jobs:
                 repo: context.repo.repo,
                 body: `🚀 **Development deployment successful!**
 
-API URL: ${apiUrl}
-
-You can test the API endpoints now.`
-              });
-            }
-
-
-
   deploy-prod:
     name: Deploy to Production
     needs: test
