@@ -83,6 +83,57 @@ else
     BUCKET_EXISTS=false
 fi
 
+# Check if CDK is already properly bootstrapped
+if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+    if [ "$BUCKET_EXISTS" = "true" ]; then
+        echo -e "${GREEN}✅ CDK is already properly bootstrapped${NC}"
+        echo -e "${BLUE}ℹ️  Stack status: $STACK_STATUS${NC}"
+        echo -e "${BLUE}ℹ️  S3 bucket: $BUCKET_NAME${NC}"
+        echo -e "${BLUE}ℹ️  No action needed - skipping bootstrap${NC}"
+        exit 0
+    fi
+fi
+
+# Check if we need to fix anything
+NEEDS_FIX=false
+
+if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+    echo -e "${YELLOW}⚠️  CDKToolkit stack is in ROLLBACK_COMPLETE state - needs fix${NC}"
+    NEEDS_FIX=true
+elif [ "$STACK_STATUS" = "NOT_FOUND" ] && [ "$BUCKET_EXISTS" = "true" ]; then
+    echo -e "${YELLOW}⚠️  S3 bucket exists but no CDKToolkit stack - needs fix${NC}"
+    NEEDS_FIX=true
+elif [ "$STACK_STATUS" = "NOT_FOUND" ] && [ "$BUCKET_EXISTS" = "false" ]; then
+    echo -e "${BLUE}ℹ️  Clean environment - running standard bootstrap${NC}"
+    NEEDS_FIX=false
+fi
+
+if [ "$NEEDS_FIX" = "false" ] && [ "$STACK_STATUS" = "NOT_FOUND" ] && [ "$BUCKET_EXISTS" = "false" ]; then
+    # Standard bootstrap for clean environment
+    echo -e "${BLUE}🔄 Running standard CDK bootstrap...${NC}"
+    
+    CDK_BOOTSTRAP_CMD="cdk bootstrap aws://$ACCOUNT_ID/$REGION --verbose"
+    
+    if [ "$CI_MODE" = "false" ]; then
+        CDK_BOOTSTRAP_CMD="$CDK_BOOTSTRAP_CMD --profile $PROFILE"
+    fi
+    
+    if eval $CDK_BOOTSTRAP_CMD; then
+        echo -e "${GREEN}✅ Standard bootstrap successful${NC}"
+        exit 0
+    else
+        echo -e "${RED}❌ Standard bootstrap failed${NC}"
+        exit 1
+    fi
+fi
+
+if [ "$NEEDS_FIX" = "false" ]; then
+    echo -e "${GREEN}✅ CDK bootstrap is in good state - no action needed${NC}"
+    exit 0
+fi
+
+echo -e "${YELLOW}🔧 CDK bootstrap needs fixing - proceeding with repair...${NC}"
+
 # Handle ROLLBACK_COMPLETE state first
 if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
     echo -e "${BLUE}🧹 Cleaning up failed CDKToolkit stack...${NC}"
