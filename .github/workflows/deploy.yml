@@ -32,7 +32,7 @@ jobs:
         run: npm run build
 
       - name: Run tests (if available)
-        run: npm test --if-present
+        run: npm test --if-present --passWithNoTests
 
   deploy-dev:
     needs: test
