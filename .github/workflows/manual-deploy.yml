@@ -85,7 +85,7 @@ jobs:
           # Show outputs
           if [ -f outputs.json ]; then
             echo "📄 Stack outputs:"
-            cat outputs.json | jq '.'
+            cat outputs.json | jq '.' || cat outputs.json
           fi
         env:
           STRIPE_SECRET_KEY: ${{ github.event.inputs.environment == 'prod' && secrets.STRIPE_SECRET_KEY_PROD || secrets.STRIPE_SECRET_KEY_DEV }}

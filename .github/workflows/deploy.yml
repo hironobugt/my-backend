@@ -66,7 +66,13 @@ jobs:
       - name: Deploy to development
         run: |
           npx cdk bootstrap --require-approval never
-          npx cdk deploy --require-approval never -c environment=dev
+          npx cdk deploy --require-approval never -c environment=dev --outputs-file outputs.json
+          
+          # Show deployment outputs
+          if [ -f outputs.json ]; then
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_DEV }}
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
@@ -104,7 +110,13 @@ jobs:
       - name: Deploy to production
         run: |
           npx cdk bootstrap --require-approval never
-          npx cdk deploy --require-approval never -c environment=prod
+          npx cdk deploy --require-approval never -c environment=prod --outputs-file outputs.json
+          
+          # Show deployment outputs
+          if [ -f outputs.json ]; then
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID_PROD }}

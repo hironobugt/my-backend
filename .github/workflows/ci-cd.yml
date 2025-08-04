@@ -93,13 +93,14 @@ jobs:
       - name: Deploy to AWS
         id: deploy
         run: |
-          OUTPUT=$(npx cdk deploy --require-approval never -c environment=dev --outputs-file outputs.json)
-          echo "deployment-output=$OUTPUT" >> $GITHUB_OUTPUT
+          npx cdk deploy --require-approval never -c environment=dev --outputs-file outputs.json
 
           # API URLを取得
           if [ -f outputs.json ]; then
             API_URL=$(cat outputs.json | jq -r '.GlacierArchiveApiStackDev.ApiUrl // empty')
             echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
           fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_DEV }}
@@ -153,13 +154,14 @@ jobs:
       - name: Deploy to AWS
         id: deploy
         run: |
-          OUTPUT=$(npx cdk deploy --require-approval never -c environment=prod --outputs-file outputs.json)
-          echo "deployment-output=$OUTPUT" >> $GITHUB_OUTPUT
+          npx cdk deploy --require-approval never -c environment=prod --outputs-file outputs.json
 
           # API URLを取得
           if [ -f outputs.json ]; then
             API_URL=$(cat outputs.json | jq -r '.GlacierArchiveApiStackProd.ApiUrl // empty')
             echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
           fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}

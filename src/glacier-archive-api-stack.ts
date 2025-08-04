@@ -192,7 +192,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // CloudFront Distribution（サムネイル配信用）
     const thumbnailDistribution = new cloudfront.Distribution(this, 'ThumbnailDistribution', {
       defaultBehavior: {
-        origin: new origins.S3Origin(archiveBucket, {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(archiveBucket, {
           originPath: '/thumbnails'
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
