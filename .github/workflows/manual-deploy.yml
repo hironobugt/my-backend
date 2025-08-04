@@ -4,34 +4,34 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: "Environment to deploy to"
         required: true
-        default: 'dev'
+        default: "dev"
         type: choice
         options:
           - dev
           - prod
       force_deploy:
-        description: 'Force deploy (skip diff check)'
+        description: "Force deploy (skip diff check)"
         required: false
         default: false
         type: boolean
       destroy:
-        description: 'Destroy stack instead of deploy'
+        description: "Destroy stack instead of deploy"
         required: false
         default: false
         type: boolean
 
 env:
-  NODE_VERSION: '22'
-  AWS_REGION: 'ap-northeast-1'
+  NODE_VERSION: "22"
+  AWS_REGION: "ap-northeast-1"
 
 jobs:
   manual-deploy:
     name: Manual Deploy to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment == 'prod' && 'production' || 'development' }}
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -79,9 +79,9 @@ jobs:
         run: |
           echo "🚀 Deploying to ${{ github.event.inputs.environment }}..."
           npx cdk deploy --require-approval never -c environment=${{ github.event.inputs.environment }} --outputs-file outputs.json
-          
+
           echo "✅ Deployment completed!"
-          
+
           # Show outputs
           if [ -f outputs.json ]; then
             echo "📄 Stack outputs:"
@@ -89,6 +89,8 @@ jobs:
           fi
         env:
           STRIPE_SECRET_KEY: ${{ github.event.inputs.environment == 'prod' && secrets.STRIPE_SECRET_KEY_PROD || secrets.STRIPE_SECRET_KEY_DEV }}
+          CDK_DEFAULT_ACCOUNT: ${{ github.event.inputs.environment == 'prod' && secrets.AWS_ACCOUNT_ID_PROD || secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ap-northeast-1
 
       - name: Destroy stack
         if: github.event.inputs.destroy == 'true'

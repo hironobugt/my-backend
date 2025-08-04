@@ -103,6 +103,8 @@ jobs:
           fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_DEV }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ap-northeast-1
 
       - name: Run smoke tests
         if: steps.deploy.outputs.api-url != ''
@@ -161,6 +163,8 @@ jobs:
           fi
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID_PROD }}
+          CDK_DEFAULT_REGION: ap-northeast-1
 
       - name: Run production smoke tests
         if: steps.deploy.outputs.api-url != ''
