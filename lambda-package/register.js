@@ -18,6 +18,7 @@ exports.handler = async (event) => {
 
         switch (action) {
             case 'signup':
+            case 'register':  // Androidアプリとの互換性のためのエイリアス
                 return await handleSignUp(params);
             case 'confirm':
                 return await handleConfirmSignUp(params);
@@ -28,7 +29,7 @@ exports.handler = async (event) => {
             case 'reset-password':
                 return await handleResetPassword(params);
             default:
-                return createErrorResponse(400, 'Invalid action. Use: signup, confirm, resend, forgot-password, or reset-password');
+                return createErrorResponse(400, 'Invalid action. Use: signup, register, confirm, resend, forgot-password, or reset-password');
         }
 
     } catch (error) {
