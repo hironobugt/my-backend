@@ -28,12 +28,12 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         email: true
       },
       // メール設定（SES使用の場合）
-      email: environment === 'prod'
+      email: environment === 'prod' 
         ? cognito.UserPoolEmail.withSES({
-          fromEmail: 'noreply@yourdomain.com',
-          fromName: 'Glaceon Archive',
-          sesRegion: 'us-east-1'
-        })
+            fromEmail: 'noreply@yourdomain.com',
+            fromName: 'Glaceon Archive',
+            sesRegion: 'us-east-1'
+          })
         : cognito.UserPoolEmail.withCognito(), // 開発環境はCognito内蔵メール
       standardAttributes: {
         email: {
@@ -232,7 +232,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const uploadFunction = new lambda.Function(this, 'UploadFunction', {
       ...lambdaProps,
       functionName: `glacier-upload-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'upload.handler',
       description: 'Upload files to Glacier Deep Archive'
     });
@@ -240,7 +240,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const listFunction = new lambda.Function(this, 'ListFunction', {
       ...lambdaProps,
       functionName: `glacier-list-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'list.handler',
       description: 'List archived files'
     });
@@ -248,7 +248,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const getFunction = new lambda.Function(this, 'GetFunction', {
       ...lambdaProps,
       functionName: `glacier-get-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'get.handler',
       timeout: cdk.Duration.seconds(60), // 復元処理のため長めに設定
       description: 'Get/restore archived files'
@@ -257,7 +257,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const deleteFunction = new lambda.Function(this, 'DeleteFunction', {
       ...lambdaProps,
       functionName: `glacier-delete-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'delete.handler',
       description: 'Delete archived files'
     });
@@ -266,7 +266,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const registerFunction = new lambda.Function(this, 'RegisterFunction', {
       ...lambdaProps,
       functionName: `glacier-register-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'register.handler',
       description: 'User registration and email verification'
     });
@@ -275,7 +275,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const billingFunction = new lambda.Function(this, 'BillingFunction', {
       ...lambdaProps,
       functionName: `glacier-billing-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'billing.handler',
       description: 'Stripe billing and subscription management'
     });
@@ -284,7 +284,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const usageFunction = new lambda.Function(this, 'UsageFunction', {
       ...lambdaProps,
       functionName: `glacier-usage-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'usage.handler',
       description: 'Usage tracking and reporting'
     });
@@ -293,7 +293,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const webhookFunction = new lambda.Function(this, 'WebhookFunction', {
       ...lambdaProps,
       functionName: `glacier-webhook-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'webhook.handler',
       description: 'Stripe webhook processing'
     });
@@ -302,7 +302,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const thumbnailFunction = new lambda.Function(this, 'ThumbnailFunction', {
       ...lambdaProps,
       functionName: `glacier-thumbnail-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'thumbnail-cloudfront.handler',
       description: 'Get thumbnail URLs (CloudFront)'
       // Sharp layerを削除 - npm packageのsharpを使用
@@ -312,7 +312,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const thumbnailBatchFunction = new lambda.Function(this, 'ThumbnailBatchFunction', {
       ...lambdaProps,
       functionName: `glacier-thumbnail-batch-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
+      code: lambda.Code.fromAsset('src'),
       handler: 'thumbnail-cloudfront.handlerBatch',
       description: 'Get multiple thumbnail URLs (CloudFront)'
     });
@@ -322,7 +322,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     archiveBucket.grantRead(listFunction);
     archiveBucket.grantReadWrite(getFunction);
     archiveBucket.grantReadWrite(deleteFunction);
-
+    
     // サムネイル関連のS3権限
     archiveBucket.grantReadWrite(uploadFunction); // サムネイル生成・保存用
     archiveBucket.grantRead(thumbnailFunction);
@@ -333,7 +333,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     archiveMetadataTable.grantReadData(listFunction);
     archiveMetadataTable.grantReadData(getFunction);
     archiveMetadataTable.grantReadWriteData(deleteFunction);
-
+    
     // サムネイル関連のDynamoDB権限
     archiveMetadataTable.grantReadData(thumbnailFunction);
     archiveMetadataTable.grantReadData(thumbnailBatchFunction);
@@ -493,7 +493,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // 認証関連のAPI エンドポイント
     const authResource = api.root.addResource('auth');
-
+    
     // POST /auth (統一された認証エンドポイント - 認証不要)
     authResource.addMethod('POST', new apigateway.LambdaIntegration(registerFunction), {
       methodResponses: [
@@ -503,7 +503,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         { statusCode: '500' }
       ]
     });
-
+    
     // POST /auth/register (認証不要) - 後方互換性のため残す
     authResource
       .addResource('register')
@@ -518,7 +518,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // 決済関連のAPI エンドポイント
     const billingResource = api.root.addResource('billing');
-
+    
     // POST /billing (認証必須)
     billingResource.addMethod('POST', new apigateway.LambdaIntegration(billingFunction), {
       authorizer: cognitoAuthorizer,
@@ -536,7 +536,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // 使用量関連のAPI エンドポイント
     const usageResource = api.root.addResource('usage');
-
+    
     // POST /usage (認証必須)
     usageResource.addMethod('POST', new apigateway.LambdaIntegration(usageFunction), {
       authorizer: cognitoAuthorizer,

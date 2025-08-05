@@ -1,0 +1,190 @@
+const { S3Client, HeadObjectCommand, RestoreObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { requireAuth, createErrorResponse, createSuccessResponse } = require('./auth');
+const { getAWSConfig } = require('./aws-config');
+
+// 使用量記録関数（ローカル実装）
+const recordUsageEvent = async (userId, eventType, eventData) => {
+    try {
+        console.log(`Usage event recorded: ${eventType} for user ${userId}`, eventData);
+        // ローカル開発では簡単なログ出力のみ
+        return true;
+    } catch (error) {
+        console.error('Record usage event error:', error);
+        return false;
+    }
+};
+
+const awsConfig = getAWSConfig();
+const s3Client = new S3Client(awsConfig);
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
+
+exports.handler = async (event) => {
+    try {
+        // 認証チェック
+        const auth = await requireAuth(event);
+        if (!auth.isValid) {
+            return createErrorResponse(401, auth.error || 'Unauthorized');
+        }
+
+        const { archiveId } = event.pathParameters;
+        
+        if (!archiveId) {
+            return createErrorResponse(400, 'archiveId is required');
+        }
+
+        // DynamoDBからアーカイブメタデータを取得
+        const getItemParams = {
+            TableName: process.env.METADATA_TABLE,
+            Key: {
+                userId: auth.userId,
+                archiveId: archiveId
+            }
+        };
+
+        const metadataResponse = await dynamoClient.send(new GetCommand(getItemParams));
+        
+        if (!metadataResponse.Item) {
+            return createErrorResponse(404, 'Archive not found or access denied');
+        }
+
+        const archiveMetadata = metadataResponse.Item;
+        const key = archiveMetadata.s3Key;
+        
+        // オブジェクトのメタデータを取得
+        const headParams = {
+            Bucket: process.env.ARCHIVE_BUCKET,
+            Key: key
+        };
+        
+        const headResponse = await s3Client.send(new HeadObjectCommand(headParams));
+        
+        // Deep Archiveからの復元状況を確認
+        const isRestored = headResponse.Restore && headResponse.Restore.includes('ongoing-request="false"');
+        const isRestoring = headResponse.Restore && headResponse.Restore.includes('ongoing-request="true"');
+        
+        if (!isRestored && !isRestoring) {
+            // 復元リクエストを開始
+            const restoreParams = {
+                Bucket: process.env.ARCHIVE_BUCKET,
+                Key: key,
+                RestoreRequest: {
+                    Days: 1, // 復元後の保持日数
+                    GlacierJobParameters: {
+                        Tier: 'Standard' // Standard (12時間), Expedited (利用不可), Bulk (48時間)
+                    }
+                }
+            };
+            
+            await s3Client.send(new RestoreObjectCommand(restoreParams));
+            
+            // DynamoDBのステータスを更新
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: auth.userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status, restoreRequestedAt = :timestamp',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'restore_requested',
+                    ':timestamp': new Date().toISOString()
+                }
+            }));
+
+            // 復元使用量イベントを記録
+            try {
+                await recordUsageEvent(auth.userId, 'restore', {
+                    archiveId: archiveId,
+                    fileName: archiveMetadata.fileName,
+                    fileSize: archiveMetadata.fileSize,
+                    restoreTier: 'Standard'
+                });
+            } catch (usageError) {
+                console.error('Failed to record restore usage event:', usageError);
+                // 使用量記録の失敗は復元処理を止めない
+            }
+            
+            return createSuccessResponse({
+                archiveId,
+                fileName: archiveMetadata.fileName,
+                status: 'restore_initiated',
+                message: 'Restore request initiated. Please check back in 12-48 hours.',
+                estimatedRestoreTime: '12-48 hours',
+                metadata: archiveMetadata.metadata
+            }, 202);
+        }
+        
+        if (isRestoring) {
+            // DynamoDBのステータスを更新
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: auth.userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'restoring'
+                }
+            }));
+
+            return createSuccessResponse({
+                archiveId,
+                fileName: archiveMetadata.fileName,
+                status: 'restoring',
+                message: 'Restore in progress. Please check back later.',
+                metadata: archiveMetadata.metadata
+            }, 202);
+        }
+        
+        // 復元完了 - ファイルを取得
+        const getParams = {
+            Bucket: process.env.ARCHIVE_BUCKET,
+            Key: key
+        };
+        
+        const getResponse = await s3Client.send(new GetObjectCommand(getParams));
+        const body = await getResponse.Body.transformToByteArray();
+        const base64Content = Buffer.from(body).toString('base64');
+        
+        // DynamoDBのステータスを更新
+        await dynamoClient.send(new UpdateCommand({
+            TableName: process.env.METADATA_TABLE,
+            Key: {
+                userId: auth.userId,
+                archiveId: archiveId
+            },
+            UpdateExpression: 'SET #status = :status, lastAccessedAt = :timestamp',
+            ExpressionAttributeNames: {
+                '#status': 'status'
+            },
+            ExpressionAttributeValues: {
+                ':status': 'restored',
+                ':timestamp': new Date().toISOString()
+            }
+        }));
+        
+        return createSuccessResponse({
+            archiveId,
+            fileName: archiveMetadata.fileName,
+            content: base64Content,
+            contentType: getResponse.ContentType,
+            fileSize: getResponse.ContentLength,
+            uploadTimestamp: archiveMetadata.uploadTimestamp,
+            metadata: archiveMetadata.metadata,
+            status: 'restored'
+        });
+
+    } catch (error) {
+        console.error('Get archive error:', error);
+        return createErrorResponse(500, `Internal server error: ${error.message}`);
+    }
+};
