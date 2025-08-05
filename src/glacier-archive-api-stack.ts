@@ -228,6 +228,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       environment: lambdaEnvironment,
       bundling: {
         externalModules: ['@aws-sdk/*'],
+        nodeModules: ['jsonwebtoken', 'jwks-client', 'uuid', 'sharp', 'stripe'],
         minify: true,
         sourceMap: true
       }
