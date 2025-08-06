@@ -189,19 +189,11 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       ]
     });
 
-    // CloudFront Origin Access Control
-    const originAccessControl = new cloudfront.OriginAccessControl(this, 'ThumbnailOAC', {
-      description: `OAC for thumbnail distribution ${environment}`,
-      originAccessControlOriginType: cloudfront.OriginAccessControlOriginType.S3,
-      signing: cloudfront.Signing.SIGV4_ALWAYS
-    });
-
     // CloudFront Distribution（サムネイル配信用）
     const thumbnailDistribution = new cloudfront.Distribution(this, 'ThumbnailDistribution', {
       defaultBehavior: {
-        origin: new origins.S3Origin(archiveBucket, {
-          originPath: '/thumbnails',
-          originAccessControlId: originAccessControl.originAccessControlId
+        origin: origins.S3BucketOrigin.withOriginAccessControl(archiveBucket, {
+          originPath: '/thumbnails'
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
@@ -215,19 +207,6 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       httpVersion: cloudfront.HttpVersion.HTTP2,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021
     });
-
-    // S3バケットポリシーを追加（CloudFrontからのアクセスを許可）
-    archiveBucket.addToResourcePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
-      actions: ['s3:GetObject'],
-      resources: [`${archiveBucket.bucketArn}/thumbnails/*`],
-      conditions: {
-        StringEquals: {
-          'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${thumbnailDistribution.distributionId}`
-        }
-      }
-    }));
 
     // Lambda関数用の共通設定
     const lambdaEnvironment = {

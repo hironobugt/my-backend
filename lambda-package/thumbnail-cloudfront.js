@@ -166,7 +166,9 @@ const generateCloudFrontUrl = (thumbnailKey) => {
         return null;
     }
     
-    return `https://${cloudFrontDomain}/${thumbnailKey}`;
+    // CloudFrontのoriginPathが/thumbnailsに設定されているため、thumbnails/プレフィックスを除去
+    const pathWithoutPrefix = thumbnailKey.replace('thumbnails/', '');
+    return `https://${cloudFrontDomain}/${pathWithoutPrefix}`;
 };
 
 // サムネイル生成処理（アップロード時に呼び出される）
