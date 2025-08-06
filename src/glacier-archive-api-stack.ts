@@ -368,7 +368,21 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
       cognitoUserPools: [userPool],
       authorizerName: `glacier-archive-authorizer-${environment}`,
-      identitySource: 'method.request.header.Authorization'
+      identitySource: 'method.request.header.Authorization',
+      resultsCacheTtl: cdk.Duration.seconds(0) // キャッシュを無効化してデバッグ
+    });
+
+    // API Gateway CloudWatch Role
+    const apiGatewayCloudWatchRole = new iam.Role(this, 'ApiGatewayCloudWatchRole', {
+      assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonAPIGatewayPushToCloudWatchLogs')
+      ]
+    });
+
+    // API Gateway Account設定
+    new apigateway.CfnAccount(this, 'ApiGatewayAccount', {
+      cloudWatchRoleArn: apiGatewayCloudWatchRole.roleArn
     });
 
     // API Gateway
@@ -389,7 +403,10 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       deployOptions: {
         stageName: environment,
         throttlingRateLimit: 100,
-        throttlingBurstLimit: 200
+        throttlingBurstLimit: 200,
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+        metricsEnabled: true
       }
     });
 

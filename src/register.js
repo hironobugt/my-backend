@@ -4,7 +4,10 @@ const {
     ConfirmSignUpCommand, 
     ResendConfirmationCodeCommand,
     ForgotPasswordCommand,
-    ConfirmForgotPasswordCommand
+    ConfirmForgotPasswordCommand,
+    InitiateAuthCommand,
+    AdminDeleteUserCommand,
+    ListUsersCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
 const { createErrorResponse, createSuccessResponse } = require('./auth');
 const { getAWSConfig } = require('./aws-config');
@@ -20,6 +23,9 @@ exports.handler = async (event) => {
             case 'signup':
             case 'register':  // Androidアプリとの互換性のためのエイリアス
                 return await handleSignUp(params);
+            case 'login':
+            case 'signin':  // Androidアプリとの互換性のためのエイリアス
+                return await handleSignIn(params);
             case 'confirm':
                 return await handleConfirmSignUp(params);
             case 'resend':
@@ -28,8 +34,18 @@ exports.handler = async (event) => {
                 return await handleForgotPassword(params);
             case 'reset-password':
                 return await handleResetPassword(params);
+            case 'admin-delete-user':
+                // 開発環境でのみ有効
+                if (process.env.NODE_ENV === 'development') {
+                    return await handleAdminDeleteUser(params);
+                } else {
+                    return createErrorResponse(403, 'Admin operations not allowed in production');
+                }
+            case 'verify-token':
+                // トークン検証用（開発・デバッグ用）
+                return await handleVerifyToken(event);
             default:
-                return createErrorResponse(400, 'Invalid action. Use: signup, register, confirm, resend, forgot-password, or reset-password');
+                return createErrorResponse(400, 'Invalid action. Use: signup, register, login, signin, confirm, resend, forgot-password, or reset-password');
         }
 
     } catch (error) {
@@ -272,5 +288,131 @@ const handleResetPassword = async ({ username, confirmationCode, newPassword }) 
         }
 
         return createErrorResponse(400, errorMessage);
+    }
+};
+
+// ユーザーサインイン
+const handleSignIn = async ({ username, password }) => {
+    try {
+        if (!username || !password) {
+            return createErrorResponse(400, 'username and password are required');
+        }
+
+        const authParams = {
+            AuthFlow: 'USER_PASSWORD_AUTH',
+            ClientId: process.env.USER_POOL_CLIENT_ID,
+            AuthParameters: {
+                USERNAME: username,
+                PASSWORD: password
+            }
+        };
+
+        const response = await cognitoClient.send(new InitiateAuthCommand(authParams));
+
+        if (response.AuthenticationResult) {
+            const { AccessToken, IdToken, RefreshToken } = response.AuthenticationResult;
+            
+            // IDトークンからユーザー情報を取得
+            const jwt = require('jsonwebtoken');
+            const decodedToken = jwt.decode(IdToken, { complete: false });
+            
+            return createSuccessResponse({
+                message: 'Sign in successful',
+                token: AccessToken,
+                refreshToken: RefreshToken,
+                user: {
+                    userId: decodedToken.sub,
+                    username: decodedToken['cognito:username'] || username,
+                    email: decodedToken.email,
+                    emailVerified: decodedToken.email_verified || false
+                }
+            });
+        } else if (response.ChallengeName) {
+            // MFAやその他のチャレンジが必要な場合
+            return createErrorResponse(400, `Authentication challenge required: ${response.ChallengeName}`);
+        } else {
+            return createErrorResponse(400, 'Authentication failed');
+        }
+
+    } catch (error) {
+        console.error('SignIn error:', error);
+        
+        let errorMessage = error.message;
+        
+        if (error.name === 'NotAuthorizedException') {
+            errorMessage = 'Invalid username or password';
+        } else if (error.name === 'UserNotFoundException') {
+            errorMessage = 'User not found';
+        } else if (error.name === 'UserNotConfirmedException') {
+            errorMessage = 'User account is not confirmed. Please check your email for verification code.';
+        } else if (error.name === 'PasswordResetRequiredException') {
+            errorMessage = 'Password reset is required';
+        } else if (error.name === 'TooManyRequestsException') {
+            errorMessage = 'Too many requests. Please try again later.';
+        }
+
+        return createErrorResponse(400, errorMessage);
+    }
+};// 管
+理者用ユーザー削除（開発環境のみ）
+const handleAdminDeleteUser = async ({ username }) => {
+    try {
+        if (!username) {
+            return createErrorResponse(400, 'username is required');
+        }
+
+        const deleteParams = {
+            UserPoolId: process.env.USER_POOL_ID,
+            Username: username
+        };
+
+        await cognitoClient.send(new AdminDeleteUserCommand(deleteParams));
+
+        return createSuccessResponse({
+            message: `User '${username}' has been successfully deleted.`,
+            username: username,
+            deleted: true
+        });
+
+    } catch (error) {
+        console.error('AdminDeleteUser error:', error);
+        
+        let errorMessage = error.message;
+        
+        if (error.name === 'UserNotFoundException') {
+            errorMessage = 'User not found';
+        } else if (error.name === 'NotAuthorizedException') {
+            errorMessage = 'Not authorized to delete user';
+        }
+
+        return createErrorResponse(400, errorMessage);
+    }
+};
+
+// トークン検証用（開発・デバッグ用）
+const handleVerifyToken = async (event) => {
+    try {
+        const { requireAuth } = require('./auth');
+        
+        // 認証チェック
+        const auth = await requireAuth(event);
+        
+        if (auth.isValid) {
+            return createSuccessResponse({
+                message: 'Token is valid',
+                user: {
+                    userId: auth.userId,
+                    username: auth.username,
+                    email: auth.email
+                },
+                tokenValid: true
+            });
+        } else {
+            return createErrorResponse(401, auth.error || 'Invalid token');
+        }
+
+    } catch (error) {
+        console.error('VerifyToken error:', error);
+        return createErrorResponse(500, `Token verification failed: ${error.message}`);
     }
 };

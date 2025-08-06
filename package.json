@@ -26,7 +26,9 @@
         "docker:down": "docker-compose down",
         "docker:setup": "docker-compose run --rm setup",
         "docker:dev": "docker-compose up --build app",
-        "start": "npm run dev"
+        "start": "npm run dev",
+        "cleanup:users": "./scripts/cleanup-test-users.sh",
+        "list:users": "aws cognito-idp list-users --user-pool-id ap-northeast-1_ljl94EBCM --region ap-northeast-1 --query 'Users[].[Username,Attributes[?Name==`email`].Value|[0],UserStatus]' --output table"
     },
     "dependencies": {
         "@aws-sdk/client-cognito-identity-provider": "^3.450.0",
