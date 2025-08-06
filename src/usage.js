@@ -18,10 +18,22 @@ const EVENT_TYPES = {
 
 exports.handler = async (event) => {
     try {
-        // 認証チェック
-        const auth = await requireAuth(event);
-        if (!auth.isValid) {
-            return createErrorResponse(401, auth.error || 'Unauthorized');
+        // 認証チェック（API Gatewayの認証コンテキストを使用）
+        let auth;
+        if (event.requestContext && event.requestContext.authorizer) {
+            // Lambda Authorizerからの認証情報を使用
+            auth = {
+                isValid: true,
+                userId: event.requestContext.authorizer.userId,
+                username: event.requestContext.authorizer.username,
+                email: event.requestContext.authorizer.email
+            };
+        } else {
+            // フォールバック：従来の認証方式
+            auth = await requireAuth(event);
+            if (!auth.isValid) {
+                return createErrorResponse(401, auth.error || 'Unauthorized');
+            }
         }
 
         const { action, ...params } = JSON.parse(event.body);

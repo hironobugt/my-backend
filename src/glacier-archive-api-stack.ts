@@ -189,11 +189,19 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       ]
     });
 
+    // CloudFront Origin Access Control
+    const originAccessControl = new cloudfront.OriginAccessControl(this, 'ThumbnailOAC', {
+      description: `OAC for thumbnail distribution ${environment}`,
+      originAccessControlOriginType: cloudfront.OriginAccessControlOriginType.S3,
+      signing: cloudfront.Signing.SIGV4_ALWAYS
+    });
+
     // CloudFront Distribution（サムネイル配信用）
     const thumbnailDistribution = new cloudfront.Distribution(this, 'ThumbnailDistribution', {
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(archiveBucket, {
-          originPath: '/thumbnails'
+        origin: new origins.S3Origin(archiveBucket, {
+          originPath: '/thumbnails',
+          originAccessControlId: originAccessControl.originAccessControlId
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
@@ -207,6 +215,19 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       httpVersion: cloudfront.HttpVersion.HTTP2,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021
     });
+
+    // S3バケットポリシーを追加（CloudFrontからのアクセスを許可）
+    archiveBucket.addToResourcePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+      actions: ['s3:GetObject'],
+      resources: [`${archiveBucket.bucketArn}/thumbnails/*`],
+      conditions: {
+        StringEquals: {
+          'AWS:SourceArn': `arn:aws:cloudfront::${this.account}:distribution/${thumbnailDistribution.distributionId}`
+        }
+      }
+    }));
 
     // Lambda関数用の共通設定
     const lambdaEnvironment = {
@@ -348,10 +369,14 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     usageTable.grantReadWriteData(getFunction);
     usageTable.grantReadWriteData(usageFunction);
     usageTable.grantReadData(billingFunction);
+    usageTable.grantReadWriteData(thumbnailFunction);
+    usageTable.grantReadWriteData(thumbnailBatchFunction);
 
     usageEventsTable.grantWriteData(uploadFunction);
     usageEventsTable.grantWriteData(getFunction);
     usageEventsTable.grantWriteData(deleteFunction);
+    usageEventsTable.grantReadWriteData(thumbnailFunction);
+    usageEventsTable.grantReadWriteData(thumbnailBatchFunction);
     usageEventsTable.grantReadWriteData(usageFunction);
 
     // Glacier復元権限の追加
@@ -364,13 +389,28 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       resources: [`${archiveBucket.bucketArn}/*`]
     }));
 
-    // Cognito Authorizer
-    const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
-      cognitoUserPools: [userPool],
-      authorizerName: `glacier-archive-authorizer-${environment}`,
+    // Lambda Authorizer Function
+    const authorizerFunction = new lambda.Function(this, 'AuthorizerFunction', {
+      ...lambdaProps,
+      functionName: `glacier-authorizer-${environment}`,
+      code: lambda.Code.fromAsset('lambda-package'),
+      handler: 'authorizer.handler',
+      description: 'Custom Lambda Authorizer for JWT token validation',
+      environment: {
+        ...lambdaEnvironment,
+        NODE_ENV: 'development' // 開発環境では簡単な認証を使用
+      }
+    });
+
+    // Lambda Authorizer
+    const lambdaAuthorizer = new apigateway.TokenAuthorizer(this, 'LambdaAuthorizer', {
+      handler: authorizerFunction,
+      authorizerName: `glacier-lambda-authorizer-${environment}`,
       identitySource: 'method.request.header.Authorization',
       resultsCacheTtl: cdk.Duration.seconds(0) // キャッシュを無効化してデバッグ
     });
+
+    // Cognito Authorizerは削除（Lambda Authorizerに統一）
 
     // API Gateway CloudWatch Role
     const apiGatewayCloudWatchRole = new iam.Role(this, 'ApiGatewayCloudWatchRole', {
@@ -413,12 +453,12 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // API リソースとメソッドの定義
     const archiveResource = api.root.addResource('archive');
 
-    // POST /archive/upload (認証必須)
+    // POST /archive/upload (認証必須 - Lambda Authorizer使用)
     archiveResource
       .addResource('upload')
       .addMethod('POST', new apigateway.LambdaIntegration(uploadFunction), {
-        authorizer: cognitoAuthorizer,
-        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer: lambdaAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
         methodResponses: [
           { statusCode: '200' },
           { statusCode: '400' },
@@ -427,12 +467,12 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         ]
       });
 
-    // GET /archive/list (認証必須)
+    // GET /archive/list (認証必須 - Lambda Authorizer使用)
     archiveResource
       .addResource('list')
       .addMethod('GET', new apigateway.LambdaIntegration(listFunction), {
-        authorizer: cognitoAuthorizer,
-        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer: lambdaAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
         requestParameters: {
           'method.request.querystring.limit': false,
           'method.request.querystring.continuationToken': false
@@ -447,8 +487,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // GET /archive/{archiveId} (認証必須)
     const archiveIdResource = archiveResource.addResource('{archiveId}');
     archiveIdResource.addMethod('GET', new apigateway.LambdaIntegration(getFunction), {
-      authorizer: cognitoAuthorizer,
-      authorizationType: apigateway.AuthorizationType.COGNITO,
+      authorizer: lambdaAuthorizer,
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
       requestParameters: {
         'method.request.path.archiveId': true
       },
@@ -463,8 +503,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // DELETE /archive/{archiveId} (認証必須)
     archiveIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(deleteFunction), {
-      authorizer: cognitoAuthorizer,
-      authorizationType: apigateway.AuthorizationType.COGNITO,
+      authorizer: lambdaAuthorizer,
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
       requestParameters: {
         'method.request.path.archiveId': true
       },
@@ -480,8 +520,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     archiveIdResource
       .addResource('thumbnail')
       .addMethod('GET', new apigateway.LambdaIntegration(thumbnailFunction), {
-        authorizer: cognitoAuthorizer,
-        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer: lambdaAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
         requestParameters: {
           'method.request.path.archiveId': true
         },
@@ -498,8 +538,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       .addResource('thumbnails')
       .addResource('batch')
       .addMethod('POST', new apigateway.LambdaIntegration(thumbnailBatchFunction), {
-        authorizer: cognitoAuthorizer,
-        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer: lambdaAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
         methodResponses: [
           { statusCode: '200' },
           { statusCode: '400' },
@@ -538,8 +578,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // POST /billing (認証必須)
     billingResource.addMethod('POST', new apigateway.LambdaIntegration(billingFunction), {
-      authorizer: cognitoAuthorizer,
-      authorizationType: apigateway.AuthorizationType.COGNITO,
+      authorizer: lambdaAuthorizer,
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
       methodResponses: [
         { statusCode: '200' },
         { statusCode: '201' },
@@ -556,8 +596,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
 
     // POST /usage (認証必須)
     usageResource.addMethod('POST', new apigateway.LambdaIntegration(usageFunction), {
-      authorizer: cognitoAuthorizer,
-      authorizationType: apigateway.AuthorizationType.COGNITO,
+      authorizer: lambdaAuthorizer,
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
       methodResponses: [
         { statusCode: '200' },
         { statusCode: '401' },
