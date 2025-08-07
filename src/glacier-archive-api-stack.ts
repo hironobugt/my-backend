@@ -344,6 +344,9 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     customerTable.grantReadData(usageFunction);
     customerTable.grantReadWriteData(webhookFunction);
 
+    // usage関数にarchiveMetadataTableの読み取り権限を追加（ストレージ計算用）
+    archiveMetadataTable.grantReadData(usageFunction);
+
     usageTable.grantReadWriteData(uploadFunction);
     usageTable.grantReadWriteData(getFunction);
     usageTable.grantReadWriteData(usageFunction);
