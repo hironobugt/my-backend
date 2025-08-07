@@ -331,7 +331,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // DynamoDB権限の付与
     archiveMetadataTable.grantReadWriteData(uploadFunction);
     archiveMetadataTable.grantReadData(listFunction);
-    archiveMetadataTable.grantReadData(getFunction);
+    archiveMetadataTable.grantReadWriteData(getFunction);
     archiveMetadataTable.grantReadWriteData(deleteFunction);
 
     // サムネイル関連のDynamoDB権限
