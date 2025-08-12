@@ -4,6 +4,35 @@ const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryComm
 const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { CognitoIdentityProviderClient, AdminDeleteUserCommand } = require('@aws-sdk/client-cognito-identity-provider');
 const { requireAuth, createErrorResponse, createSuccessResponse } = require('./auth');
+
+// Billing専用のレスポンス関数
+const createBillingSuccessResponse = (data, statusCode = 200) => {
+    return {
+        statusCode,
+        headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+            success: true,
+            data: data
+        })
+    };
+};
+
+const createBillingErrorResponse = (statusCode, error) => {
+    return {
+        statusCode,
+        headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+            success: false,
+            error: error
+        })
+    };
+};
 const { getAWSConfig } = require('./aws-config');
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -88,7 +117,11 @@ const setupCustomer = async (auth, { email, name }) => {
         // 既存の顧客情報を確認
         const existingCustomer = await getCustomerFromDB(auth.userId);
         if (existingCustomer && existingCustomer.stripeCustomerId) {
-            return createErrorResponse(400, 'Customer already exists');
+            return createBillingSuccessResponse({
+                message: 'Customer already exists',
+                customerId: existingCustomer.stripeCustomerId,
+                customerData: existingCustomer
+            });
         }
 
         // Stripe顧客を作成
@@ -117,7 +150,7 @@ const setupCustomer = async (auth, { email, name }) => {
             Item: customerData
         }));
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             message: 'Customer setup completed',
             customerId: customer.id,
             customerData
@@ -125,7 +158,7 @@ const setupCustomer = async (auth, { email, name }) => {
 
     } catch (error) {
         console.error('Setup customer error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -133,12 +166,12 @@ const setupCustomer = async (auth, { email, name }) => {
 const addPaymentMethod = async (auth, { paymentMethodId }) => {
     try {
         if (!paymentMethodId) {
-            return createErrorResponse(400, 'paymentMethodId is required');
+            return createBillingErrorResponse(400, 'paymentMethodId is required');
         }
 
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer || !customer.stripeCustomerId) {
-            return createErrorResponse(400, 'Customer not found. Please setup customer first.');
+            return createBillingErrorResponse(400, 'Customer not found. Please setup customer first.');
         }
 
         // 支払い方法を顧客にアタッチ
@@ -164,14 +197,14 @@ const addPaymentMethod = async (auth, { paymentMethodId }) => {
             }
         }));
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             message: 'Payment method added successfully',
             paymentMethodId
         });
 
     } catch (error) {
         console.error('Add payment method error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -180,11 +213,11 @@ const createSubscription = async (auth, { priceId }) => {
     try {
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer || !customer.stripeCustomerId) {
-            return createErrorResponse(400, 'Customer not found. Please setup customer first.');
+            return createBillingErrorResponse(400, 'Customer not found. Please setup customer first.');
         }
 
         if (!customer.defaultPaymentMethod) {
-            return createErrorResponse(400, 'Please add a payment method first.');
+            return createBillingErrorResponse(400, 'Please add a payment method first.');
         }
 
         // 基本料金のサブスクリプションを作成
@@ -221,7 +254,7 @@ const createSubscription = async (auth, { priceId }) => {
             }
         }));
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             message: 'Subscription created',
             subscriptionId: subscription.id,
             clientSecret: subscription.latest_invoice.payment_intent.client_secret,
@@ -230,7 +263,7 @@ const createSubscription = async (auth, { priceId }) => {
 
     } catch (error) {
         console.error('Create subscription error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -239,7 +272,7 @@ const getBillingInfo = async (auth) => {
     try {
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer) {
-            return createErrorResponse(404, 'Customer not found');
+            return createBillingErrorResponse(404, 'Customer not found');
         }
 
         let stripeCustomer = null;
@@ -263,7 +296,7 @@ const getBillingInfo = async (auth) => {
             }
         }
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             customer: {
                 ...customer,
                 stripeCustomer: stripeCustomer ? {
@@ -293,7 +326,7 @@ const getBillingInfo = async (auth) => {
 
     } catch (error) {
         console.error('Get billing info error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -329,7 +362,7 @@ const getUsage = async (auth, { month }) => {
 
         const totalCost = Object.values(costs).reduce((sum, cost) => sum + cost, 0);
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             usage,
             costs,
             totalCost: Math.round(totalCost * 100) / 100, // 小数点以下2桁
@@ -338,7 +371,7 @@ const getUsage = async (auth, { month }) => {
 
     } catch (error) {
         console.error('Get usage error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -347,7 +380,7 @@ const getInvoices = async (auth, { limit = 10 }) => {
     try {
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer || !customer.stripeCustomerId) {
-            return createErrorResponse(404, 'Customer not found');
+            return createBillingErrorResponse(404, 'Customer not found');
         }
 
         const invoices = await stripe.invoices.list({
@@ -355,7 +388,7 @@ const getInvoices = async (auth, { limit = 10 }) => {
             limit: parseInt(limit)
         });
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             invoices: invoices.data.map(invoice => ({
                 id: invoice.id,
                 amount_paid: invoice.amount_paid,
@@ -372,7 +405,7 @@ const getInvoices = async (auth, { limit = 10 }) => {
 
     } catch (error) {
         console.error('Get invoices error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -381,7 +414,7 @@ const cancelSubscription = async (auth) => {
     try {
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer || !customer.subscriptionId) {
-            return createErrorResponse(404, 'Subscription not found');
+            return createBillingErrorResponse(404, 'Subscription not found');
         }
 
         const subscription = await stripe.subscriptions.update(customer.subscriptionId, {
@@ -400,14 +433,14 @@ const cancelSubscription = async (auth) => {
             }
         }));
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             message: 'Subscription will be canceled at the end of the current period',
             cancelAt: subscription.current_period_end
         });
 
     } catch (error) {
         console.error('Cancel subscription error:', error);
-        return createErrorResponse(500, error.message);
+        return createBillingErrorResponse(500, error.message);
     }
 };
 
@@ -449,7 +482,7 @@ const deleteAccount = async (auth, { confirmPassword, reason }) => {
 
         console.log(`Account deletion completed for user: ${auth.userId}`);
 
-        return createSuccessResponse({
+        return createBillingSuccessResponse({
             message: 'Account has been permanently deleted',
             deletedAt: new Date().toISOString(),
             userId: auth.userId
@@ -457,7 +490,7 @@ const deleteAccount = async (auth, { confirmPassword, reason }) => {
 
     } catch (error) {
         console.error('Delete account error:', error);
-        return createErrorResponse(500, `Account deletion failed: ${error.message}`);
+        return createBillingErrorResponse(500, `Account deletion failed: ${error.message}`);
     }
 };
 
