@@ -64,7 +64,14 @@ const PRICING = {
 
 exports.handler = async (event) => {
     try {
-        // 認証チェック（API Gatewayの認証コンテキストを使用）
+        const { action, ...params } = JSON.parse(event.body);
+
+        // Stripe設定取得は認証不要
+        if (action === 'get-stripe-config') {
+            return await getStripeConfig();
+        }
+
+        // その他のアクションは認証が必要
         let auth;
         if (event.requestContext && event.requestContext.authorizer) {
             // Lambda Authorizerからの認証情報を使用
@@ -78,15 +85,15 @@ exports.handler = async (event) => {
             // フォールバック：従来の認証方式
             auth = await requireAuth(event);
             if (!auth.isValid) {
-                return createErrorResponse(401, auth.error || 'Unauthorized');
+                return createBillingErrorResponse(401, auth.error || 'Unauthorized');
             }
         }
-
-        const { action, ...params } = JSON.parse(event.body);
 
         switch (action) {
             case 'setup-customer':
                 return await setupCustomer(auth, params);
+            case 'create-payment-intent':
+                return await createPaymentIntent(auth, params);
             case 'add-payment-method':
                 return await addPaymentMethod(auth, params);
             case 'create-subscription':
@@ -99,10 +106,12 @@ exports.handler = async (event) => {
                 return await getInvoices(auth, params);
             case 'cancel-subscription':
                 return await cancelSubscription(auth);
+            case 'remove-payment-method':
+                return await removePaymentMethod(auth, params);
             case 'delete-account':
                 return await deleteAccount(auth, params);
             default:
-                return createErrorResponse(400, 'Invalid action');
+                return createBillingErrorResponse(400, 'Invalid action');
         }
 
     } catch (error) {
@@ -162,6 +171,44 @@ const setupCustomer = async (auth, { email, name }) => {
     }
 };
 
+// Payment Intent作成（カード登録用）
+const createPaymentIntent = async (auth, { amount = 0 }) => {
+    try {
+        const customer = await getCustomerFromDB(auth.userId);
+        if (!customer || !customer.stripeCustomerId) {
+            return createBillingErrorResponse(400, 'Customer not found. Please setup customer first.');
+        }
+
+        // Setup Intent（カード登録用）を作成
+        const setupIntent = await stripe.setupIntents.create({
+            customer: customer.stripeCustomerId,
+            payment_method_types: ['card'],
+            usage: 'off_session'
+        });
+
+        return createBillingSuccessResponse({
+            clientSecret: setupIntent.client_secret,
+            setupIntentId: setupIntent.id
+        });
+
+    } catch (error) {
+        console.error('Create payment intent error:', error);
+        return createBillingErrorResponse(500, error.message);
+    }
+};
+
+// Stripe設定取得（公開可能キー）
+const getStripeConfig = async () => {
+    try {
+        return createBillingSuccessResponse({
+            publishableKey: process.env.STRIPE_PUBLISHABLE_KEY
+        });
+    } catch (error) {
+        console.error('Get Stripe config error:', error);
+        return createBillingErrorResponse(500, error.message);
+    }
+};
+
 // 支払い方法の追加
 const addPaymentMethod = async (auth, { paymentMethodId }) => {
     try {
@@ -209,32 +256,75 @@ const addPaymentMethod = async (auth, { paymentMethodId }) => {
 };
 
 // サブスクリプション作成
-const createSubscription = async (auth, { priceId }) => {
+const createSubscription = async (auth, { priceId = null }) => {
     try {
         const customer = await getCustomerFromDB(auth.userId);
         if (!customer || !customer.stripeCustomerId) {
             return createBillingErrorResponse(400, 'Customer not found. Please setup customer first.');
         }
 
-        if (!customer.defaultPaymentMethod) {
+        // Stripeから最新の支払い方法を確認
+        const paymentMethods = await stripe.paymentMethods.list({
+            customer: customer.stripeCustomerId,
+            type: 'card'
+        });
+
+        if (!paymentMethods.data || paymentMethods.data.length === 0) {
             return createBillingErrorResponse(400, 'Please add a payment method first.');
         }
+
+        // 最初の支払い方法をデフォルトとして設定（まだ設定されていない場合）
+        const defaultPaymentMethod = paymentMethods.data[0];
+        await stripe.customers.update(customer.stripeCustomerId, {
+            invoice_settings: {
+                default_payment_method: defaultPaymentMethod.id
+            }
+        });
+
+        // まずプロダクトを作成または取得
+        let product;
+        try {
+            // 既存のプロダクトを取得を試行
+            const products = await stripe.products.list({
+                limit: 1,
+                active: true
+            });
+
+            if (products.data.length > 0) {
+                product = products.data[0];
+            } else {
+                // プロダクトが存在しない場合は作成
+                product = await stripe.products.create({
+                    name: 'Glacier Archive Base Plan',
+                    description: 'Monthly subscription for Glacier Archive service',
+                    type: 'service'
+                });
+            }
+        } catch (error) {
+            // プロダクト作成/取得に失敗した場合は新規作成
+            product = await stripe.products.create({
+                name: 'Glacier Archive Base Plan',
+                description: 'Monthly subscription for Glacier Archive service',
+                type: 'service'
+            });
+        }
+
+        // 価格を作成
+        const price = await stripe.prices.create({
+            currency: 'usd',
+            product: product.id,
+            unit_amount: Math.round(PRICING.baseFee * 100), // セント単位 ($3.00 = 300 cents)
+            recurring: {
+                interval: 'month'
+            }
+        });
 
         // 基本料金のサブスクリプションを作成
         const subscription = await stripe.subscriptions.create({
             customer: customer.stripeCustomerId,
             items: [
                 {
-                    price_data: {
-                        currency: 'usd',
-                        product_data: {
-                            name: 'Glacier Archive Base Plan'
-                        },
-                        unit_amount: Math.round(PRICING.baseFee * 100), // セント単位
-                        recurring: {
-                            interval: 'month'
-                        }
-                    }
+                    price: price.id
                 }
             ],
             payment_behavior: 'default_incomplete',
@@ -405,6 +495,53 @@ const getInvoices = async (auth, { limit = 10 }) => {
 
     } catch (error) {
         console.error('Get invoices error:', error);
+        return createBillingErrorResponse(500, error.message);
+    }
+};
+
+// 支払い方法の削除
+const removePaymentMethod = async (auth, { paymentMethodId }) => {
+    try {
+        if (!paymentMethodId) {
+            return createBillingErrorResponse(400, 'paymentMethodId is required');
+        }
+
+        const customer = await getCustomerFromDB(auth.userId);
+        if (!customer || !customer.stripeCustomerId) {
+            return createBillingErrorResponse(400, 'Customer not found');
+        }
+
+        // 支払い方法をデタッチ
+        await stripe.paymentMethods.detach(paymentMethodId);
+
+        // もしこれがデフォルトの支払い方法だった場合、他の支払い方法をデフォルトに設定
+        const paymentMethods = await stripe.paymentMethods.list({
+            customer: customer.stripeCustomerId,
+            type: 'card'
+        });
+
+        if (paymentMethods.data.length > 0) {
+            // 残っている最初の支払い方法をデフォルトに設定
+            await stripe.customers.update(customer.stripeCustomerId, {
+                invoice_settings: {
+                    default_payment_method: paymentMethods.data[0].id
+                }
+            });
+        } else {
+            // 支払い方法がなくなった場合、デフォルトをクリア
+            await stripe.customers.update(customer.stripeCustomerId, {
+                invoice_settings: {
+                    default_payment_method: null
+                }
+            });
+        }
+
+        return createBillingSuccessResponse({
+            message: 'Payment method removed successfully'
+        });
+
+    } catch (error) {
+        console.error('Remove payment method error:', error);
         return createBillingErrorResponse(500, error.message);
     }
 };

@@ -7,6 +7,8 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 
 export class GlacierArchiveApiStack extends cdk.Stack {
@@ -298,6 +300,35 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       description: 'Stripe webhook processing'
     });
 
+    // 復元クリーンアップ関数
+    const restoreCleanupFunction = new lambda.Function(this, 'RestoreCleanupFunction', {
+      ...lambdaProps,
+      functionName: `glacier-restore-cleanup-${environment}`,
+      code: lambda.Code.fromAsset('lambda-package'),
+      handler: 'restore-cleanup.handler',
+      timeout: cdk.Duration.minutes(15), // 大量のファイル処理のため長めに設定
+      description: 'Cleanup restored files and move back to Deep Archive'
+    });
+
+    // EventBridge Rule for scheduled cleanup (毎時実行)
+    const cleanupRule = new cdk.aws_events.Rule(this, 'RestoreCleanupRule', {
+      ruleName: `glacier-restore-cleanup-${environment}`,
+      description: 'Trigger restore cleanup function every hour',
+      schedule: cdk.aws_events.Schedule.rate(cdk.Duration.hours(1))
+    });
+
+    // Lambda関数をEventBridgeのターゲットに追加
+    cleanupRule.addTarget(new cdk.aws_events_targets.LambdaFunction(restoreCleanupFunction));
+
+    // 再アーカイブ関数
+    const rearchiveFunction = new lambda.Function(this, 'RearchiveFunction', {
+      ...lambdaProps,
+      functionName: `glacier-rearchive-${environment}`,
+      code: lambda.Code.fromAsset('lambda-package'),
+      handler: 'rearchive.handler',
+      description: 'Move restored files back to Deep Archive storage'
+    });
+
     // サムネイル処理関数
     const thumbnailFunction = new lambda.Function(this, 'ThumbnailFunction', {
       ...lambdaProps,
@@ -367,6 +398,37 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       actions: [
         's3:RestoreObject',
         's3:GetObjectAttributes'
+      ],
+      resources: [`${archiveBucket.bucketArn}/*`]
+    }));
+
+    // 復元クリーンアップ関数の権限
+    archiveMetadataTable.grantReadWriteData(restoreCleanupFunction);
+    archiveBucket.grantReadWrite(restoreCleanupFunction);
+    
+    restoreCleanupFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        's3:GetObject',
+        's3:PutObject',
+        's3:CopyObject',
+        's3:DeleteObject',
+        's3:GetObjectAttributes',
+        's3:PutObjectTagging'
+      ],
+      resources: [`${archiveBucket.bucketArn}/*`]
+    }));
+
+    // 再アーカイブ関数の権限
+    archiveMetadataTable.grantReadWriteData(rearchiveFunction);
+    archiveBucket.grantReadWrite(rearchiveFunction);
+    usageEventsTable.grantWriteData(rearchiveFunction);
+    
+    rearchiveFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        's3:GetObjectAttributes',
+        's3:PutObjectTagging'
       ],
       resources: [`${archiveBucket.bucketArn}/*`]
     }));
@@ -497,6 +559,25 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         { statusCode: '500' }
       ]
     });
+
+    // POST /archive/{archiveId}/rearchive (認証必須)
+    archiveIdResource
+      .addResource('rearchive')
+      .addMethod('POST', new apigateway.LambdaIntegration(rearchiveFunction), {
+        authorizer: lambdaAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
+        requestParameters: {
+          'method.request.path.archiveId': true
+        },
+        methodResponses: [
+          { statusCode: '200' },
+          { statusCode: '400' },
+          { statusCode: '401' },
+          { statusCode: '404' },
+          { statusCode: '409' },
+          { statusCode: '500' }
+        ]
+      });
 
     // GET /archive/{archiveId}/thumbnail (認証必須)
     archiveIdResource

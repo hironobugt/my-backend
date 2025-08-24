@@ -41,6 +41,9 @@ exports.handler = async (event) => {
         }
 
         const { archiveId } = event.pathParameters;
+        const queryParams = event.queryStringParameters || {};
+        const statusOnly = queryParams.statusOnly === 'true';
+        const downloadRequested = queryParams.download === 'true';
         
         if (!archiveId) {
             return createErrorResponse(400, 'archiveId is required');
@@ -72,11 +75,37 @@ exports.handler = async (event) => {
         
         const headResponse = await s3Client.send(new HeadObjectCommand(headParams));
         
+        // デバッグ用：復元状態の詳細ログ
+        console.log('S3 Object Details:', {
+            StorageClass: headResponse.StorageClass,
+            Restore: headResponse.Restore,
+            LastModified: headResponse.LastModified,
+            ContentLength: headResponse.ContentLength
+        });
+        
         // Deep Archiveからの復元状況を確認
         const isRestored = headResponse.Restore && headResponse.Restore.includes('ongoing-request="false"');
         const isRestoring = headResponse.Restore && headResponse.Restore.includes('ongoing-request="true"');
         
+        console.log('Restore Status Check:', {
+            hasRestore: !!headResponse.Restore,
+            isRestored,
+            isRestoring,
+            restoreString: headResponse.Restore
+        });
+        
         if (!isRestored && !isRestoring) {
+            if (statusOnly) {
+                // 状態確認のみ - 復元リクエストは送信しない
+                return createSuccessResponse({
+                    archiveId,
+                    fileName: archiveMetadata.fileName,
+                    status: 'archived',
+                    message: 'File is archived. No restore request has been initiated.',
+                    metadata: archiveMetadata.metadata
+                }, 200);
+            }
+            
             // 復元リクエストを開始
             const restoreParams = {
                 Bucket: process.env.ARCHIVE_BUCKET,
@@ -132,6 +161,17 @@ exports.handler = async (event) => {
         }
         
         if (isRestoring) {
+            if (downloadRequested) {
+                // ダウンロードが要求されたが、まだ復元中
+                return createSuccessResponse({
+                    archiveId,
+                    fileName: archiveMetadata.fileName,
+                    status: 'not_ready',
+                    message: 'File is still being restored. Please wait for restoration to complete.',
+                    metadata: archiveMetadata.metadata
+                }, 409);
+            }
+            
             // DynamoDBのステータスを更新
             await dynamoClient.send(new UpdateCommand({
                 TableName: process.env.METADATA_TABLE,
