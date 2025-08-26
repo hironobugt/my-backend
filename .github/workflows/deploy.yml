@@ -58,8 +58,7 @@ jobs:
 
       - name: Prepare Lambda package
         run: |
-          mkdir -p lambda-package
-          cp -r src/* lambda-package/
+          # Lambda packageは既に存在するので、依存関係のみインストール
           cd lambda-package
           npm install --production
 
@@ -109,8 +108,7 @@ jobs:
 
       - name: Prepare Lambda package
         run: |
-          mkdir -p lambda-package
-          cp -r src/* lambda-package/
+          # Lambda packageは既に存在するので、依存関係のみインストール
           cd lambda-package
           npm install --production
 
