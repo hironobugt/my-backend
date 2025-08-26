@@ -116,7 +116,7 @@ exports.handler = async (event) => {
 
     } catch (error) {
         console.error('Billing error:', error);
-        return createErrorResponse(500, `Internal server error: ${error.message}`);
+        return createBillingErrorResponse(500, `Internal server error: ${error.message}`);
     }
 };
 
