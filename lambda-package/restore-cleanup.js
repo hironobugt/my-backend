@@ -93,13 +93,14 @@ const processRestoredArchive = async (archiveItem) => {
         return;
     }
     
-    // 復元期限が近い場合（24時間以内）、Glacier Deep Archiveに戻す
+    // 復元期限が近い場合（6時間以内）、Glacier Deep Archiveに戻す
+    // 24時間から6時間に変更して、ユーザーがダウンロードする時間を確保
     const restoreExpiry = extractRestoreExpiry(headResponse.Restore);
     const now = new Date();
     const expiryTime = new Date(restoreExpiry);
     const hoursUntilExpiry = (expiryTime - now) / (1000 * 60 * 60);
     
-    if (hoursUntilExpiry <= 24) {
+    if (hoursUntilExpiry <= 6) {
         console.log(`Archive ${archiveId} expires in ${hoursUntilExpiry.toFixed(1)} hours, moving back to Deep Archive`);
         
         // オブジェクトをGlacier Deep Archiveストレージクラスでコピー

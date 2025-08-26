@@ -91,8 +91,14 @@ exports.handler = async (event) => {
             hasRestore: !!headResponse.Restore,
             isRestored,
             isRestoring,
-            restoreString: headResponse.Restore
+            restoreString: headResponse.Restore,
+            storageClass: headResponse.StorageClass
         });
+        
+        // Deep Archiveの場合、復元が完了していてもストレージクラスはDEEP_ARCHIVEのまま
+        // 復元状態はRestoreヘッダーで判定する
+        const isDeepArchive = headResponse.StorageClass === 'DEEP_ARCHIVE';
+        const canAccess = !isDeepArchive || isRestored;
         
         if (!isRestored && !isRestoring) {
             if (statusOnly) {
@@ -197,43 +203,93 @@ exports.handler = async (event) => {
             }, 202);
         }
         
+        // Deep Archiveで復元されていない場合のエラーハンドリング
+        if (isDeepArchive && !isRestored) {
+            console.log(`Archive ${archiveId} is in Deep Archive but not restored`);
+            
+            // DynamoDBのステータスを正しい状態に修正
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: auth.userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'archived'
+                }
+            }));
+            
+            return createErrorResponse(409, 'File is in Deep Archive storage and not currently restored. Please initiate a restore request first.');
+        }
+        
         // 復元完了 - ファイルを取得
-        const getParams = {
-            Bucket: process.env.ARCHIVE_BUCKET,
-            Key: key
-        };
-        
-        const getResponse = await s3Client.send(new GetObjectCommand(getParams));
-        const body = await getResponse.Body.transformToByteArray();
-        const base64Content = Buffer.from(body).toString('base64');
-        
-        // DynamoDBのステータスを更新
-        await dynamoClient.send(new UpdateCommand({
-            TableName: process.env.METADATA_TABLE,
-            Key: {
-                userId: auth.userId,
-                archiveId: archiveId
-            },
-            UpdateExpression: 'SET #status = :status, lastAccessedAt = :timestamp',
-            ExpressionAttributeNames: {
-                '#status': 'status'
-            },
-            ExpressionAttributeValues: {
-                ':status': 'restored',
-                ':timestamp': new Date().toISOString()
+        try {
+            const getParams = {
+                Bucket: process.env.ARCHIVE_BUCKET,
+                Key: key
+            };
+            
+            const getResponse = await s3Client.send(new GetObjectCommand(getParams));
+            const body = await getResponse.Body.transformToByteArray();
+            const base64Content = Buffer.from(body).toString('base64');
+            
+            // 実際にファイルが取得できた場合のみDynamoDBのステータスを更新
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: auth.userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status, lastAccessedAt = :timestamp',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'restored',
+                    ':timestamp': new Date().toISOString()
+                }
+            }));
+            
+            return createSuccessResponse({
+                archiveId,
+                fileName: archiveMetadata.fileName,
+                content: base64Content,
+                contentType: getResponse.ContentType,
+                fileSize: getResponse.ContentLength,
+                uploadTimestamp: archiveMetadata.uploadTimestamp,
+                metadata: archiveMetadata.metadata,
+                status: 'restored'
+            });
+            
+        } catch (getError) {
+            console.error(`Failed to get object ${key}:`, getError);
+            
+            // ファイル取得に失敗した場合、DynamoDBのステータスを修正
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: auth.userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'archived'
+                }
+            }));
+            
+            if (getError.name === 'InvalidObjectState') {
+                return createErrorResponse(409, 'File is not currently available for download. It may still be in Deep Archive or restoration may have expired.');
             }
-        }));
-        
-        return createSuccessResponse({
-            archiveId,
-            fileName: archiveMetadata.fileName,
-            content: base64Content,
-            contentType: getResponse.ContentType,
-            fileSize: getResponse.ContentLength,
-            uploadTimestamp: archiveMetadata.uploadTimestamp,
-            metadata: archiveMetadata.metadata,
-            status: 'restored'
-        });
+            
+            throw getError;
+        }
 
     } catch (error) {
         console.error('Get archive error:', error);
