@@ -221,6 +221,8 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
       CLOUDFRONT_DOMAIN: thumbnailDistribution.distributionDomainName,
       STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder',
+      FROM_EMAIL: environment === 'prod' ? 'noreply@yourdomain.com' : 'noreply@glacierarchive.com',
+      APP_URL: environment === 'prod' ? 'https://yourapp.com' : 'https://dev.yourapp.com',
       NODE_OPTIONS: '--enable-source-maps'
     };
 
@@ -320,14 +322,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     // Lambda関数をEventBridgeのターゲットに追加
     cleanupRule.addTarget(new cdk.aws_events_targets.LambdaFunction(restoreCleanupFunction));
 
-    // 再アーカイブ関数
-    const rearchiveFunction = new lambda.Function(this, 'RearchiveFunction', {
-      ...lambdaProps,
-      functionName: `glacier-rearchive-${environment}`,
-      code: lambda.Code.fromAsset('lambda-package'),
-      handler: 'rearchive.handler',
-      description: 'Move restored files back to Deep Archive storage'
-    });
+
 
     // サムネイル処理関数
     const thumbnailFunction = new lambda.Function(this, 'ThumbnailFunction', {
@@ -402,9 +397,40 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       resources: [`${archiveBucket.bucketArn}/*`]
     }));
 
+    // SES権限の追加（復元完了通知用）
+    getFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'ses:SendEmail',
+        'ses:SendRawEmail'
+      ],
+      resources: ['*'] // SESは特定のリソースARNを持たない
+    }));
+
+    // テスト用通知関数（開発環境のみ）
+    const testNotificationFunction = new lambda.Function(this, 'TestNotificationFunction', {
+      ...lambdaProps,
+      functionName: `glacier-test-notification-${environment}`,
+      code: lambda.Code.fromAsset('lambda-package'),
+      handler: 'test-notification.handler',
+      description: 'Test notification functionality'
+    });
+
+    // テスト関数にも必要な権限を付与
+    customerTable.grantReadData(testNotificationFunction);
+    testNotificationFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'ses:SendEmail',
+        'ses:SendRawEmail'
+      ],
+      resources: ['*']
+    }));
+
     // 復元クリーンアップ関数の権限
     archiveMetadataTable.grantReadWriteData(restoreCleanupFunction);
     archiveBucket.grantReadWrite(restoreCleanupFunction);
+    customerTable.grantReadData(restoreCleanupFunction); // 通知送信用
     
     restoreCleanupFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -419,19 +445,17 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       resources: [`${archiveBucket.bucketArn}/*`]
     }));
 
-    // 再アーカイブ関数の権限
-    archiveMetadataTable.grantReadWriteData(rearchiveFunction);
-    archiveBucket.grantReadWrite(rearchiveFunction);
-    usageEventsTable.grantWriteData(rearchiveFunction);
-    
-    rearchiveFunction.addToRolePolicy(new iam.PolicyStatement({
+    // restore-cleanup関数にもSES権限を追加（通知送信用）
+    restoreCleanupFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
-        's3:GetObjectAttributes',
-        's3:PutObjectTagging'
+        'ses:SendEmail',
+        'ses:SendRawEmail'
       ],
-      resources: [`${archiveBucket.bucketArn}/*`]
+      resources: ['*']
     }));
+
+
 
     // Lambda Authorizer Function
     const authorizerFunction = new lambda.Function(this, 'AuthorizerFunction', {
@@ -560,24 +584,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       ]
     });
 
-    // POST /archive/{archiveId}/rearchive (認証必須)
-    archiveIdResource
-      .addResource('rearchive')
-      .addMethod('POST', new apigateway.LambdaIntegration(rearchiveFunction), {
-        authorizer: lambdaAuthorizer,
-        authorizationType: apigateway.AuthorizationType.CUSTOM,
-        requestParameters: {
-          'method.request.path.archiveId': true
-        },
-        methodResponses: [
-          { statusCode: '200' },
-          { statusCode: '400' },
-          { statusCode: '401' },
-          { statusCode: '404' },
-          { statusCode: '409' },
-          { statusCode: '500' }
-        ]
-      });
+
 
     // GET /archive/{archiveId}/thumbnail (認証必須)
     archiveIdResource

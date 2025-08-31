@@ -3,6 +3,7 @@ const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { requireAuth, createErrorResponse, createSuccessResponse } = require('./auth');
 const { getAWSConfig } = require('./aws-config');
+const { sendRestoreCompleteNotification } = require('./notification');
 
 // 使用量記録関数（ローカル実装）
 const recordUsageEvent = async (userId, eventType, eventData) => {
@@ -237,6 +238,18 @@ exports.handler = async (event) => {
             const body = await getResponse.Body.transformToByteArray();
             const base64Content = Buffer.from(body).toString('base64');
             
+            // 復元完了通知を送信（初回復元完了時のみ）
+            const wasRestoring = archiveMetadata.status === 'restoring' || archiveMetadata.status === 'restore_requested';
+            if (wasRestoring) {
+                try {
+                    await sendRestoreCompleteNotification(auth.userId, archiveId, archiveMetadata.fileName);
+                    console.log(`Restore complete notification sent for archive: ${archiveId}`);
+                } catch (notificationError) {
+                    console.error('Failed to send restore notification:', notificationError);
+                    // 通知の失敗はファイル取得を止めない
+                }
+            }
+            
             // 実際にファイルが取得できた場合のみDynamoDBのステータスを更新
             await dynamoClient.send(new UpdateCommand({
                 TableName: process.env.METADATA_TABLE,
@@ -244,13 +257,14 @@ exports.handler = async (event) => {
                     userId: auth.userId,
                     archiveId: archiveId
                 },
-                UpdateExpression: 'SET #status = :status, lastAccessedAt = :timestamp',
+                UpdateExpression: 'SET #status = :status, lastAccessedAt = :timestamp, notificationSent = :notificationSent',
                 ExpressionAttributeNames: {
                     '#status': 'status'
                 },
                 ExpressionAttributeValues: {
                     ':status': 'restored',
-                    ':timestamp': new Date().toISOString()
+                    ':timestamp': new Date().toISOString(),
+                    ':notificationSent': wasRestoring ? new Date().toISOString() : archiveMetadata.notificationSent
                 }
             }));
             

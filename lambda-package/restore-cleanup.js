@@ -2,6 +2,7 @@ const { S3Client, HeadObjectCommand, CopyObjectCommand, DeleteObjectCommand } = 
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { getAWSConfig } = require('./aws-config');
+const { sendRestoreCompleteNotification } = require('./notification');
 
 const awsConfig = getAWSConfig();
 const s3Client = new S3Client(awsConfig);
@@ -11,15 +12,17 @@ exports.handler = async (event) => {
     try {
         console.log('Starting restore cleanup process...');
         
-        // DynamoDBから復元済みのアーカイブを検索
+        // DynamoDBから復元中および復元済みのアーカイブを検索
         const scanParams = {
             TableName: process.env.METADATA_TABLE,
-            FilterExpression: '#status = :status',
+            FilterExpression: '#status IN (:restoring, :restore_requested, :restored)',
             ExpressionAttributeNames: {
                 '#status': 'status'
             },
             ExpressionAttributeValues: {
-                ':status': 'restored'
+                ':restoring': 'restoring',
+                ':restore_requested': 'restore_requested',
+                ':restored': 'restored'
             }
         };
         
@@ -73,9 +76,9 @@ exports.handler = async (event) => {
 };
 
 const processRestoredArchive = async (archiveItem) => {
-    const { userId, archiveId, s3Key, fileName } = archiveItem;
+    const { userId, archiveId, s3Key, fileName, status } = archiveItem;
     
-    console.log(`Processing restored archive: ${archiveId} (${fileName})`);
+    console.log(`Processing archive: ${archiveId} (${fileName}) - Status: ${status}`);
     
     // S3オブジェクトの現在の状態を確認
     const headParams = {
@@ -85,9 +88,81 @@ const processRestoredArchive = async (archiveItem) => {
     
     const headResponse = await s3Client.send(new HeadObjectCommand(headParams));
     
-    // 復元期限を確認
+    // 復元状態を確認
     const isRestored = headResponse.Restore && headResponse.Restore.includes('ongoing-request="false"');
+    const isRestoring = headResponse.Restore && headResponse.Restore.includes('ongoing-request="true"');
     
+    // 復元完了の検知と通知送信
+    if (isRestored && (status === 'restoring' || status === 'restore_requested')) {
+        console.log(`Archive ${archiveId} restoration completed, sending notification`);
+        
+        try {
+            // 復元完了通知を送信
+            await sendRestoreCompleteNotification(userId, archiveId, fileName);
+            console.log(`Restore complete notification sent for archive: ${archiveId}`);
+            
+            // DynamoDBのステータスを更新（通知送信済みマーク）
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status, notificationSent = :notificationSent, restoredAt = :restoredAt',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'restored',
+                    ':notificationSent': new Date().toISOString(),
+                    ':restoredAt': new Date().toISOString()
+                }
+            }));
+            
+        } catch (notificationError) {
+            console.error(`Failed to send restore notification for ${archiveId}:`, notificationError);
+            // 通知失敗でもステータスは更新する
+            await dynamoClient.send(new UpdateCommand({
+                TableName: process.env.METADATA_TABLE,
+                Key: {
+                    userId: userId,
+                    archiveId: archiveId
+                },
+                UpdateExpression: 'SET #status = :status, restoredAt = :restoredAt',
+                ExpressionAttributeNames: {
+                    '#status': 'status'
+                },
+                ExpressionAttributeValues: {
+                    ':status': 'restored',
+                    ':restoredAt': new Date().toISOString()
+                }
+            }));
+        }
+        
+        return; // 復元完了処理が終わったので、再アーカイブ処理はスキップ
+    }
+    
+    // まだ復元中の場合
+    if (isRestoring && status !== 'restoring') {
+        console.log(`Archive ${archiveId} is still restoring, updating status`);
+        await dynamoClient.send(new UpdateCommand({
+            TableName: process.env.METADATA_TABLE,
+            Key: {
+                userId: userId,
+                archiveId: archiveId
+            },
+            UpdateExpression: 'SET #status = :status',
+            ExpressionAttributeNames: {
+                '#status': 'status'
+            },
+            ExpressionAttributeValues: {
+                ':status': 'restoring'
+            }
+        }));
+        return;
+    }
+    
+    // 復元されていない場合はスキップ
     if (!isRestored) {
         console.log(`Archive ${archiveId} is not in restored state, skipping`);
         return;

@@ -19,10 +19,7 @@
                 "cloudformation:ExecuteChangeSet",
                 "cloudformation:DeleteChangeSet"
             ],
-            "Resource": [
-                "arn:aws:cloudformation:ap-northeast-1:*:stack/CDKToolkit/*",
-                "arn:aws:cloudformation:ap-northeast-1:*:stack/GlaceonApiStack-*"
-            ]
+            "Resource": "*"
         },
         {
             "Sid": "S3CDKAssets",
@@ -63,7 +60,10 @@
                 "lambda:TagResource",
                 "lambda:UntagResource"
             ],
-            "Resource": "arn:aws:lambda:ap-northeast-1:*:function:GlaceonApiStack-*"
+            "Resource": [
+                "arn:aws:lambda:ap-northeast-1:*:function:GlaceonApiStack-*",
+                "arn:aws:lambda:ap-northeast-1:*:function:GlacierArchiveApiStackDev-*"
+            ]
         },
         {
             "Sid": "APIGateway",
@@ -144,8 +144,21 @@
             ],
             "Resource": [
                 "arn:aws:iam::*:role/GlaceonApiStack-*",
+                "arn:aws:iam::*:role/GlacierArchiveApiStackDev-*",
                 "arn:aws:iam::*:role/cdk-*"
             ]
+        },
+        {
+            "Sid": "IAMPolicyManagement",
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreatePolicyVersion",
+                "iam:DeletePolicyVersion",
+                "iam:ListPolicyVersions",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion"
+            ],
+            "Resource": "arn:aws:iam::*:policy/GlaceonDeployPolicy"
         },
         {
             "Sid": "CloudWatchLogs",
@@ -158,7 +171,10 @@
                 "logs:TagLogGroup",
                 "logs:UntagLogGroup"
             ],
-            "Resource": "arn:aws:logs:ap-northeast-1:*:log-group:/aws/lambda/GlaceonApiStack-*"
+            "Resource": [
+                "arn:aws:logs:ap-northeast-1:*:log-group:/aws/lambda/GlaceonApiStack-*",
+                "arn:aws:logs:ap-northeast-1:*:log-group:/aws/lambda/GlacierArchiveApiStackDev-*"
+            ]
         },
         {
             "Sid": "STSGetCallerIdentity",
@@ -211,6 +227,24 @@
                 "lambda:GetLayerVersion",
                 "lambda:ListLayerVersions",
                 "lambda:ListLayers"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SESEmailService",
+            "Effect": "Allow",
+            "Action": [
+                "ses:SendEmail",
+                "ses:SendRawEmail",
+                "ses:SendTemplatedEmail",
+                "ses:ListIdentities",
+                "ses:GetIdentityVerificationAttributes",
+                "ses:VerifyEmailIdentity",
+                "ses:VerifyDomainIdentity",
+                "ses:DeleteIdentity",
+                "ses:GetSendQuota",
+                "ses:GetSendStatistics",
+                "ses:ListVerifiedEmailAddresses"
             ],
             "Resource": "*"
         }
