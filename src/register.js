@@ -353,8 +353,9 @@ const handleSignIn = async ({ username, password }) => {
 
         return createErrorResponse(400, errorMessage);
     }
-};// 管
-理者用ユーザー削除（開発環境のみ）
+};
+
+// 管理者用ユーザー削除（開発環境のみ）
 const handleAdminDeleteUser = async ({ username }) => {
     try {
         if (!username) {

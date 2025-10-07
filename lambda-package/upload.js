@@ -6,17 +6,8 @@ const { requireAuth, createErrorResponse, createSuccessResponse } = require('./a
 const { getAWSConfig } = require('./aws-config');
 const { generateAndSaveThumbnail } = require('./thumbnail-cloudfront');
 
-// 使用量記録関数（ローカル実装）
-const recordUsageEvent = async (userId, eventType, eventData) => {
-    try {
-        console.log(`Usage event recorded: ${eventType} for user ${userId}`, eventData);
-        // ローカル開発では簡単なログ出力のみ
-        return true;
-    } catch (error) {
-        console.error('Record usage event error:', error);
-        return false;
-    }
-};
+// 使用量記録関数をインポート
+const { recordUsageEvent } = require('./usage');
 
 const awsConfig = getAWSConfig();
 const s3Client = new S3Client(awsConfig);
@@ -43,7 +34,6 @@ exports.handler = async (event) => {
         }
 
         // APIリクエストの使用量を記録
-        const { recordUsageEvent } = require('./usage');
         await recordUsageEvent(auth.userId, 'api_request', {
             endpoint: 'upload',
             method: event.httpMethod

@@ -29,14 +29,7 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       autoVerify: {
         email: true
       },
-      // メール設定（SES使用の場合）
-      email: environment === 'prod'
-        ? cognito.UserPoolEmail.withSES({
-          fromEmail: 'noreply@yourdomain.com',
-          fromName: 'Glaceon Archive',
-          sesRegion: 'us-east-1'
-        })
-        : cognito.UserPoolEmail.withCognito(), // 開発環境はCognito内蔵メール
+
       standardAttributes: {
         email: {
           required: true,
@@ -59,7 +52,13 @@ export class GlacierArchiveApiStack extends cdk.Stack {
         requireSymbols: false
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      removalPolicy: cdk.RemovalPolicy.RETAIN
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      // SESを使用してEメール送信
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: environment === 'prod' ? 'noreply@yourdomain.com' : 'frederic170617@gmail.com',
+        fromName: 'Glacier Archive',
+        replyTo: environment === 'prod' ? 'support@yourdomain.com' : 'frederic170617@gmail.com'
+      })
     });
 
     // Cognito User Pool Client（モバイルアプリ用）
@@ -298,8 +297,12 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       ...lambdaProps,
       functionName: `glacier-webhook-${environment}`,
       code: lambda.Code.fromAsset('lambda-package'),
-      handler: 'webhook.handler',
-      description: 'Stripe webhook processing'
+      handler: 'stripe-webhook.handler',
+      description: 'Stripe webhook processing for usage-based billing',
+      environment: {
+        ...lambdaEnvironment,
+        STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || 'whsec_placeholder'
+      }
     });
 
     // 復元クリーンアップ関数
@@ -369,6 +372,9 @@ export class GlacierArchiveApiStack extends cdk.Stack {
     customerTable.grantReadWriteData(billingFunction);
     customerTable.grantReadData(usageFunction);
     customerTable.grantReadWriteData(webhookFunction);
+
+    // webhook関数に使用量テーブルの読み取り権限を追加
+    usageTable.grantReadData(webhookFunction);
 
     // usage関数にarchiveMetadataTableの読み取り権限を追加（ストレージ計算用）
     archiveMetadataTable.grantReadData(usageFunction);

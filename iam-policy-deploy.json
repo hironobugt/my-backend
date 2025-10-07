@@ -19,7 +19,11 @@
                 "cloudformation:ExecuteChangeSet",
                 "cloudformation:DeleteChangeSet"
             ],
-            "Resource": "*"
+            "Resource": [
+                "*",
+                "arn:aws:cloudformation:ap-northeast-1:*:stack/GlacierArchiveApiStackDev/*",
+                "arn:aws:cloudformation:ap-northeast-1:*:stack/CDKToolkit/*"
+            ]
         },
         {
             "Sid": "S3CDKAssets",
@@ -87,7 +91,13 @@
                 "dynamodb:DescribeTable",
                 "dynamodb:ListTables",
                 "dynamodb:TagResource",
-                "dynamodb:UntagResource"
+                "dynamodb:UntagResource",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:Query",
+                "dynamodb:Scan"
             ],
             "Resource": "arn:aws:dynamodb:ap-northeast-1:*:table/glacier-*"
         },

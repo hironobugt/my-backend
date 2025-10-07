@@ -423,8 +423,9 @@ const getCustomerFromDB = async (userId) => {
         console.error('Get customer from DB error:', error);
         return null;
     }
-};// 完
-全なアカウント削除機能
+};
+
+// 完全なアカウント削除機能
 const deleteAccount = async (auth, { confirmPassword, reason }) => {
     try {
         console.log(`Account deletion requested for user: ${auth.userId}`);

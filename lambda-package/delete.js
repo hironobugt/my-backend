@@ -3,6 +3,7 @@ const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
 const { requireAuth, createErrorResponse, createSuccessResponse } = require('./auth');
 const { getAWSConfig } = require('./aws-config');
+const { recordUsageEvent } = require('./usage');
 
 const awsConfig = getAWSConfig();
 const s3Client = new S3Client(awsConfig);
@@ -70,6 +71,19 @@ exports.handler = async (event) => {
         };
         
         await dynamoClient.send(new DeleteCommand(deleteDynamoParams));
+
+        // 使用量イベントを記録
+        try {
+            await recordUsageEvent(auth.userId, 'delete', {
+                archiveId: archiveId,
+                fileName: archiveMetadata.fileName,
+                fileSize: archiveMetadata.fileSize,
+                fileSizeGB: (archiveMetadata.fileSize || 0) / (1024 * 1024 * 1024)
+            });
+        } catch (usageError) {
+            console.error('Failed to record usage event:', usageError);
+            // 使用量記録の失敗は削除処理を止めない
+        }
 
         return createSuccessResponse({
             archiveId,
