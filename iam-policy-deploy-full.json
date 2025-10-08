@@ -1,0 +1,27 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CDKBootstrapAndDeploy",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:*",
+                "s3:*",
+                "lambda:*",
+                "apigateway:*",
+                "iam:*",
+                "cognito-idp:*",
+                "dynamodb:*",
+                "cloudfront:*",
+                "logs:*",
+                "ecr:*",
+                "sts:GetCallerIdentity",
+                "ssm:GetParameter",
+                "ssm:GetParameters",
+                "ssm:PutParameter",
+                "ssm:DeleteParameter"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

@@ -5,6 +5,8 @@
     "lib": [
       "es2020"
     ],
+    "outDir": "./lib",
+    "rootDir": "./",
     "declaration": true,
     "strict": true,
     "noImplicitAny": true,
@@ -27,8 +29,14 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
+  "include": [
+    "bin/**/*",
+    "src/**/*",
+    "tests/**/*"
+  ],
   "exclude": [
     "node_modules",
-    "cdk.out"
+    "cdk.out",
+    "lib"
   ]
 }

@@ -1,0 +1,110 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - prod
+      force_deploy:
+        description: "Force deploy (skip diff check)"
+        required: false
+        default: false
+        type: boolean
+      destroy:
+        description: "Destroy stack instead of deploy"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: "22"
+  AWS_REGION: "ap-northeast-1"
+
+jobs:
+  manual-deploy:
+    name: Manual Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment == 'prod' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Configure AWS credentials (Development)
+        if: github.event.inputs.environment == 'dev'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (Production)
+        if: github.event.inputs.environment == 'prod'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK Bootstrap
+        if: github.event.inputs.destroy != 'true'
+        run: npx cdk bootstrap --require-approval never
+
+      - name: Show CDK diff
+        if: github.event.inputs.force_deploy != 'true' && github.event.inputs.destroy != 'true'
+        run: |
+          echo "📋 Showing changes to be deployed:"
+          npx cdk diff -c environment=${{ github.event.inputs.environment }} || true
+
+      - name: Deploy to AWS
+        if: github.event.inputs.destroy != 'true'
+        run: |
+          echo "🚀 Deploying to ${{ github.event.inputs.environment }}..."
+          npx cdk deploy --require-approval never -c environment=${{ github.event.inputs.environment }} --outputs-file outputs.json
+
+          echo "✅ Deployment completed!"
+
+          # Show outputs
+          if [ -f outputs.json ]; then
+            echo "📄 Stack outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
+        env:
+          STRIPE_SECRET_KEY: ${{ github.event.inputs.environment == 'prod' && secrets.STRIPE_SECRET_KEY_PROD || secrets.STRIPE_SECRET_KEY_DEV }}
+          CDK_DEFAULT_ACCOUNT: ${{ github.event.inputs.environment == 'prod' && secrets.AWS_ACCOUNT_ID_PROD || secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ap-northeast-1
+
+      - name: Destroy stack
+        if: github.event.inputs.destroy == 'true'
+        run: |
+          echo "🗑️ Destroying stack in ${{ github.event.inputs.environment }}..."
+          npx cdk destroy --force -c environment=${{ github.event.inputs.environment }}
+          echo "✅ Stack destroyed!"
+
+      - name: Summary
+        run: |
+          if [ "${{ github.event.inputs.destroy }}" == "true" ]; then
+            echo "🗑️ Stack destroyed in ${{ github.event.inputs.environment }} environment"
+          else
+            echo "🚀 Successfully deployed to ${{ github.event.inputs.environment }} environment"
+            echo "Environment: ${{ github.event.inputs.environment }}"
+            echo "Force deploy: ${{ github.event.inputs.force_deploy }}"
+          fi

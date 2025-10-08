@@ -1,244 +1,150 @@
-name: Deploy Glaceon API
+name: Deploy to AWS
 
 on:
   push:
     branches:
       - main
       - develop
-    paths:
-      - 'glaceon/**'
   pull_request:
     branches:
       - main
-    paths:
-      - 'glaceon/**'
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - prod
 
 env:
-  AWS_REGION: ap-northeast-1
-  NODE_VERSION: '18'
+  NODE_VERSION: "22"
 
 jobs:
   test:
-    name: Test & Build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: glaceon
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
-      
+          cache: "npm"
+
       - name: Install dependencies
-        run: npm ci
-      
-      - name: Lint code
-        run: npm run lint || echo "Linting skipped - no lint script"
-      
-      - name: Run tests
-        run: npm test || echo "Tests skipped - no test script"
-      
-      - name: Build TypeScript
+        run: npm install
+
+      - name: Run TypeScript build
         run: npm run build
-      
-      - name: Cache build artifacts
-        uses: actions/cache@v3
-        with:
-          path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
+
+      - name: Run tests (if available)
+        run: npm test --if-present --passWithNoTests
 
   deploy-dev:
-    name: Deploy to Development
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
-    environment: 
-      name: development
-      url: ${{ steps.deploy.outputs.api-url }}
-    defaults:
-      run:
-        working-directory: glaceon
-    
+    if: github.ref == 'refs/heads/develop'
+    environment: development
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
-      
-      - name: Restore build cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
-      
-      - name: Install dependencies (if cache miss)
-        run: npm ci
-      
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Prepare Lambda package
+        run: |
+          # Lambda packageは既に存在するので、依存関係のみインストール
+          cd lambda-package
+          npm install --production
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Install AWS CDK
-        run: npm install -g aws-cdk
-      
-      - name: Create environment file
-        run: |
-          cat > .env << EOF
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY_DEV }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET_DEV }}
-          NODE_ENV=development
-          EOF
-      
+          aws-region: ap-northeast-1
+
       - name: Deploy to development
-        id: deploy
         run: |
-          ./deploy.sh --environment dev
-          
-          # Extract API URL from CDK outputs
-          if [ -f "cdk-outputs.json" ]; then
-            API_URL=$(cat cdk-outputs.json | jq -r '.[] | .ApiUrl // empty')
-            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-            echo "🚀 Development API URL: $API_URL"
+          npx cdk bootstrap --require-approval never
+          npx cdk deploy --require-approval never -c environment=dev --outputs-file outputs.json
+
+          # Show deployment outputs
+          if [ -f outputs.json ]; then
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
           fi
-      
-      - name: Comment PR with deployment info
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const apiUrl = '${{ steps.deploy.outputs.api-url }}';
-            if (apiUrl) {
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `🚀 **Development deployment successful!**\n\nAPI URL: ${apiUrl}\n\nYou can test the API endpoints now.`
-              });
-            }
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_DEV }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ap-northeast-1
 
   deploy-prod:
-    name: Deploy to Production
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod')
-    environment: 
-      name: production
-      url: ${{ steps.deploy.outputs.api-url }}
-    defaults:
-      run:
-        working-directory: glaceon
-    
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: glaceon/package-lock.json
-      
-      - name: Restore build cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            glaceon/lib
-            glaceon/node_modules
-          key: ${{ runner.os }}-build-${{ hashFiles('glaceon/package-lock.json') }}-${{ github.sha }}
-      
-      - name: Install dependencies (if cache miss)
-        run: npm ci
-      
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Prepare Lambda package
+        run: |
+          # Lambda packageは既に存在するので、依存関係のみインストール
+          cd lambda-package
+          npm install --production
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Install AWS CDK
-        run: npm install -g aws-cdk
-      
-      - name: Create production environment file
-        run: |
-          cat > .env.production << EOF
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY_PROD }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET_PROD }}
-          NODE_ENV=production
-          EOF
-      
-      - name: Deploy to production
-        id: deploy
-        run: |
-          ./deploy.sh --environment prod
-          
-          # Extract API URL from CDK outputs
-          if [ -f "cdk-outputs.json" ]; then
-            API_URL=$(cat cdk-outputs.json | jq -r '.[] | .ApiUrl // empty')
-            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-            echo "🚀 Production API URL: $API_URL"
-          fi
-      
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: api-v${{ github.run_number }}
-          release_name: API Release v${{ github.run_number }}
-          body: |
-            🚀 **Production deployment successful!**
-            
-            **API URL:** ${{ steps.deploy.outputs.api-url }}
-            
-            **Changes in this release:**
-            ${{ github.event.head_commit.message }}
-            
-            **Commit:** ${{ github.sha }}
-          draft: false
-          prerelease: false
+          aws-region: ap-northeast-1
 
-  cleanup:
-    name: Cleanup
+      - name: Deploy to production
+        run: |
+          npx cdk bootstrap --require-approval never
+          npx cdk deploy --require-approval never -c environment=prod --outputs-file outputs.json
+
+          # Show deployment outputs
+          if [ -f outputs.json ]; then
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID_PROD }}
+          CDK_DEFAULT_REGION: ap-northeast-1
+
+  notify:
+    needs: [deploy-dev, deploy-prod]
     runs-on: ubuntu-latest
     if: always()
-    needs: [deploy-dev, deploy-prod]
-    defaults:
-      run:
-        working-directory: glaceon
-    
+
     steps:
-      - name: Cleanup temporary files
+      - name: Notify deployment result
         run: |
-          rm -f .env .env.production cdk-outputs.json || true
+          if [ "${{ needs.deploy-dev.result }}" == "success" ] || [ "${{ needs.deploy-prod.result }}" == "success" ]; then
+            echo "✅ Deployment successful"
+          else
+            echo "❌ Deployment failed"
+            exit 1
+          fi

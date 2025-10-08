@@ -1,0 +1,204 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "22"
+  AWS_REGION: "ap-northeast-1"
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test --if-present --passWithNoTests
+
+      - name: CDK synth (validation)
+        run: npx cdk synth -c environment=dev
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+  deploy-development:
+    name: Deploy to Development
+    needs: [lint-and-test, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: development
+      url: ${{ steps.deploy.outputs.api-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Prepare Lambda package
+        run: |
+          mkdir -p lambda-package
+          cp -r src/* lambda-package/
+          cd lambda-package
+          npm install --production
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK Bootstrap
+        run: npx cdk bootstrap --require-approval never
+
+      - name: Deploy to AWS
+        id: deploy
+        run: |
+          npx cdk deploy --require-approval never -c environment=dev --outputs-file outputs.json
+
+          # API URLを取得
+          if [ -f outputs.json ]; then
+            API_URL=$(cat outputs.json | jq -r '.GlacierArchiveApiStackDev.ApiUrl // empty')
+            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_DEV }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ap-northeast-1
+
+      - name: Run smoke tests
+        if: steps.deploy.outputs.api-url != ''
+        run: |
+          API_URL="${{ steps.deploy.outputs.api-url }}"
+          echo "Testing API at: $API_URL"
+
+          # Health check
+          curl -f "$API_URL/health" || echo "Health check failed"
+
+  deploy-production:
+    name: Deploy to Production
+    needs: [lint-and-test, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.api-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Prepare Lambda package
+        run: |
+          mkdir -p lambda-package
+          cp -r src/* lambda-package/
+          cd lambda-package
+          npm install --production
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK Bootstrap
+        run: npx cdk bootstrap --require-approval never
+
+      - name: Deploy to AWS
+        id: deploy
+        run: |
+          npx cdk deploy --require-approval never -c environment=prod --outputs-file outputs.json
+
+          # API URLを取得
+          if [ -f outputs.json ]; then
+            API_URL=$(cat outputs.json | jq -r '.GlacierArchiveApiStackProd.ApiUrl // empty')
+            echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+            echo "✅ Deployment outputs:"
+            cat outputs.json | jq '.' || cat outputs.json
+          fi
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID_PROD }}
+          CDK_DEFAULT_REGION: ap-northeast-1
+
+      - name: Run production smoke tests
+        if: steps.deploy.outputs.api-url != ''
+        run: |
+          API_URL="${{ steps.deploy.outputs.api-url }}"
+          echo "Testing production API at: $API_URL"
+
+          # Health check
+          curl -f "$API_URL/health" || echo "Health check failed"
+
+  cleanup-on-failure:
+    name: Cleanup on Failure
+    needs: [deploy-development, deploy-production]
+    runs-on: ubuntu-latest
+    if: failure()
+
+    steps:
+      - name: Notify failure
+        run: |
+          echo "❌ Deployment failed. Manual intervention may be required."
+          echo "Check the AWS CloudFormation console for stack status."

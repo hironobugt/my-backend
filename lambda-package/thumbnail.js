@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb');
 const sharp = require('sharp');
@@ -52,9 +52,11 @@ const generateImageThumbnail = async (buffer) => {
     }
 };
 
-// 動画サムネイル生成（プレースホルダー）
+// 動画サムネイル生成（簡易版 - 実際の実装ではffmpegが必要）
 const generateVideoThumbnail = async (buffer) => {
     try {
+        // 実際の実装では ffmpeg を使用して動画の最初のフレームを抽出
+        // ここでは簡易的にプレースホルダー画像を生成
         const placeholder = await sharp({
             create: {
                 width: 200,
@@ -75,12 +77,11 @@ const generateVideoThumbnail = async (buffer) => {
             top: 0,
             left: 0
         }])
-        .jpeg({ quality: 70 })
         .toBuffer();
         
         return {
             buffer: placeholder,
-            contentType: 'image/jpeg'
+            contentType: 'image/png'
         };
     } catch (error) {
         console.error('Video thumbnail generation error:', error);
@@ -102,7 +103,7 @@ const generateThumbnail = async (fileName, fileBuffer) => {
     }
 };
 
-// サムネイルをS3に保存（CloudFront用の設定付き）
+// サムネイルをS3に保存
 const saveThumbnailToS3 = async (userId, archiveId, thumbnailData) => {
     try {
         const thumbnailKey = `thumbnails/${userId}/${archiveId}/thumbnail.jpg`;
@@ -112,7 +113,6 @@ const saveThumbnailToS3 = async (userId, archiveId, thumbnailData) => {
             Key: thumbnailKey,
             Body: thumbnailData.buffer,
             ContentType: thumbnailData.contentType,
-            CacheControl: 'public, max-age=31536000', // 1年間キャッシュ
             Metadata: {
                 'user-id': userId,
                 'archive-id': archiveId,
@@ -151,24 +151,6 @@ const updateThumbnailMetadata = async (userId, archiveId, thumbnailKey, fileType
     }
 };
 
-// CloudFront URL生成（ローカル開発対応）
-const generateCloudFrontUrl = (thumbnailKey) => {
-    const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN;
-    
-    // ローカル開発環境の場合
-    if (process.env.NODE_ENV === 'development' || process.env.USE_MOTO === 'true') {
-        const localServerUrl = process.env.LOCAL_SERVER_URL || 'http://localhost:3000';
-        return `${localServerUrl}/local-thumbnail/${encodeURIComponent(thumbnailKey)}`;
-    }
-    
-    if (!cloudFrontDomain) {
-        console.warn('CLOUDFRONT_DOMAIN not configured, falling back to S3 direct access');
-        return null;
-    }
-    
-    return `https://${cloudFrontDomain}/${thumbnailKey}`;
-};
-
 // サムネイル生成処理（アップロード時に呼び出される）
 exports.generateAndSaveThumbnail = async (userId, archiveId, fileName, fileBuffer) => {
     try {
@@ -201,14 +183,10 @@ exports.generateAndSaveThumbnail = async (userId, archiveId, fileName, fileBuffe
         // メタデータ更新
         const metadataUpdated = await updateThumbnailMetadata(userId, archiveId, thumbnailKey, fileType);
         
-        // CloudFront URLを生成
-        const cloudFrontUrl = generateCloudFrontUrl(thumbnailKey);
-        
         return {
             success: metadataUpdated,
             fileType: fileType,
             thumbnailKey: thumbnailKey,
-            cloudFrontUrl: cloudFrontUrl,
             message: metadataUpdated ? 'Thumbnail generated successfully' : 'Failed to update metadata'
         };
         
@@ -221,25 +199,13 @@ exports.generateAndSaveThumbnail = async (userId, archiveId, fileName, fileBuffe
     }
 };
 
-// サムネイルURL取得エンドポイント（CloudFront URL返却）
+// サムネイル取得エンドポイント
 exports.handler = async (event) => {
     try {
-        // 認証チェック（API Gatewayの認証コンテキストを使用）
-        let auth;
-        if (event.requestContext && event.requestContext.authorizer) {
-            // Lambda Authorizerからの認証情報を使用
-            auth = {
-                isValid: true,
-                userId: event.requestContext.authorizer.userId,
-                username: event.requestContext.authorizer.username,
-                email: event.requestContext.authorizer.email
-            };
-        } else {
-            // フォールバック：従来の認証方式
-            auth = await requireAuth(event);
-            if (!auth.isValid) {
-                return createErrorResponse(401, auth.error || 'Unauthorized');
-            }
+        // 認証チェック
+        const auth = await requireAuth(event);
+        if (!auth.isValid) {
+            return createErrorResponse(401, auth.error || 'Unauthorized');
         }
 
         const { archiveId } = event.pathParameters || {};
@@ -267,81 +233,33 @@ exports.handler = async (event) => {
             return createErrorResponse(404, 'Thumbnail not available for this file');
         }
 
-        // CloudFront URLを生成
-        const cloudFrontUrl = generateCloudFrontUrl(thumbnailKey);
-        
-        if (!cloudFrontUrl) {
-            return createErrorResponse(500, 'CloudFront not configured');
-        }
-
-        // サムネイル配信の使用量を記録
-        const { recordUsageEvent } = require('./usage');
-        await recordUsageEvent(auth.userId, 'thumbnail_view', {
-            archiveId: archiveId,
-            thumbnailKey: thumbnailKey,
-            fileType: fileType
-        });
-
-        return createSuccessResponse({
-            thumbnailUrl: cloudFrontUrl,
-            fileType: fileType,
-            cacheInfo: {
-                maxAge: 31536000, // 1年
-                provider: 'CloudFront'
-            }
-        });
-
-    } catch (error) {
-        console.error('Get thumbnail URL error:', error);
-        return createErrorResponse(500, `Internal server error: ${error.message}`);
-    }
-};
-
-// 複数のサムネイルURL一括取得
-exports.handlerBatch = async (event) => {
-    try {
-        const auth = await requireAuth(event);
-        if (!auth.isValid) {
-            return createErrorResponse(401, auth.error || 'Unauthorized');
-        }
-
-        const { archiveIds } = JSON.parse(event.body || '{}');
-        
-        if (!archiveIds || !Array.isArray(archiveIds)) {
-            return createErrorResponse(400, 'archiveIds array is required');
-        }
-
-        const thumbnailUrls = {};
-        
-        // 並列でメタデータを取得
-        await Promise.all(archiveIds.map(async (archiveId) => {
-            try {
-                const metadataResponse = await dynamoClient.send(new GetCommand({
-                    TableName: process.env.METADATA_TABLE,
-                    Key: {
-                        userId: auth.userId,
-                        archiveId: archiveId
-                    }
-                }));
-
-                if (!metadataResponse.Item || !metadataResponse.Item.hasThumbnail) {
-                    thumbnailUrls[archiveId] = null;
-                    return;
-                }
-
-                const cloudFrontUrl = generateCloudFrontUrl(metadataResponse.Item.thumbnailKey);
-                thumbnailUrls[archiveId] = cloudFrontUrl;
-
-            } catch (error) {
-                console.error(`Failed to get thumbnail URL for ${archiveId}:`, error);
-                thumbnailUrls[archiveId] = null;
-            }
+        // S3からサムネイルを取得
+        const thumbnailResponse = await s3Client.send(new GetObjectCommand({
+            Bucket: process.env.ARCHIVE_BUCKET,
+            Key: thumbnailKey
         }));
 
-        return createSuccessResponse({ thumbnailUrls });
+        // ストリームをバッファに変換
+        const chunks = [];
+        for await (const chunk of thumbnailResponse.Body) {
+            chunks.push(chunk);
+        }
+        const thumbnailBuffer = Buffer.concat(chunks);
+
+        return {
+            statusCode: 200,
+            headers: {
+                'Content-Type': thumbnailResponse.ContentType || 'image/jpeg',
+                'Content-Length': thumbnailBuffer.length,
+                'Cache-Control': 'public, max-age=86400', // 24時間キャッシュ
+                'Access-Control-Allow-Origin': '*'
+            },
+            body: thumbnailBuffer.toString('base64'),
+            isBase64Encoded: true
+        };
 
     } catch (error) {
-        console.error('Batch thumbnail URL error:', error);
+        console.error('Get thumbnail error:', error);
         return createErrorResponse(500, `Internal server error: ${error.message}`);
     }
 };

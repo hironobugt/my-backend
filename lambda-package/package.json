@@ -1,0 +1,11 @@
+{
+  "name": "glacier-lambda-functions",
+  "version": "1.0.0",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.0",
+    "jwks-client": "^2.0.5",
+    "uuid": "^9.0.0",
+    "sharp": "^0.34.3",
+    "stripe": "^14.0.0"
+  }
+}
