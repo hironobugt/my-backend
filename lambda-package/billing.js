@@ -336,7 +336,7 @@ const createSubscription = async (auth, { priceId = null }) => {
                 save_default_payment_method: 'on_subscription',
                 payment_method_options: {
                     card: {
-                        request_three_d_secure: 'if_required'
+                        request_three_d_secure: 'automatic'
                     }
                 }
             },

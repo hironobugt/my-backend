@@ -476,6 +476,9 @@ export class GlacierArchiveApiStack extends cdk.Stack {
       }
     });
 
+    // Authorizer関数にcustomerTableの読み取り権限を追加（サブスクリプション状態チェック用）
+    customerTable.grantReadData(authorizerFunction);
+
     // Lambda Authorizer
     const lambdaAuthorizer = new apigateway.TokenAuthorizer(this, 'LambdaAuthorizer', {
       handler: authorizerFunction,
